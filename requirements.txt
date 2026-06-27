@@ -1,0 +1,9 @@
+# LangGraph 1.x teaching environment (verified against langgraph 1.2.x)
+langgraph>=1.0,<2.0
+langgraph-cli[inmem]>=0.2
+langchain>=0.3
+langchain-openai>=0.2
+openai>=1.40
+streamlit>=1.36
+pandas>=2.0
+python-dotenv>=1.0

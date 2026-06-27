@@ -1,0 +1,30 @@
+# local source mirror of langchain repos (huge, not part of the lesson)
+opensrc/
+
+# virtualenv + secrets
+.venv/
+.env
+studio/.env
+
+# python caches
+__pycache__/
+*.pyc
+
+# langgraph dev server runtime state
+studio/.langgraph_api/
+
+# local tooling / agent scaffolding (not part of the lesson)
+.claude/
+AGENTS.md
+skills-lock.json
+
+# macOS
+.DS_Store
+
+# private instructor materials — intentionally NOT published
+INSTRUCTOR_GUIDE.md
+lesson.html
+
+# retired examples (dropped from the lesson)
+storygen.py
+supporticket.py
