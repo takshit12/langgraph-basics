@@ -5,8 +5,12 @@ memory_demo.py
 A SIMPLE LangGraph example that shows how MEMORY is built up and REMEMBERED
 across turns using a *checkpointer* + a *thread_id*.
 
-No LLM and NO API key are required. This is a deterministic "memory bot": the
-whole point is to make the *persistence* concept vivid, not to be clever.
+NO API key is REQUIRED: with no key it gives a deterministic templated reply,
+so the *persistence* concept is vivid on its own. But if OPENROUTER_API_KEY is
+set (in the project .env), the bot generates a NATURAL reply that uses the
+remembered conversation — e.g. ask "what's my name?" after telling it, and it
+answers "Your name is Takshit." The memory still comes from the checkpointer;
+the LLM just reads what was remembered.
 
 The three ideas this file teaches
 ---------------------------------
@@ -27,13 +31,20 @@ Run it interactively:        python memory_demo.py
 Run the headless auto-demo:  python memory_demo.py < /dev/null
 """
 
+import os
 import sys
 import operator
 from typing import Annotated, TypedDict
 
+from dotenv import load_dotenv
+
 # LangGraph 1.x idiom.
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
+
+# Pick up OPENROUTER_API_KEY / OPENROUTER_MODEL from the project .env (optional).
+load_dotenv()
+MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +69,54 @@ class MemState(TypedDict):
 
 
 # ---------------------------------------------------------------------------
+# Reply generation: LLM (uses the remembered conversation) or offline template.
+# ---------------------------------------------------------------------------
+def _offline_reply(remembered: list, incoming: str, next_turn: int) -> str:
+    """Deterministic fallback (no API key): echoes what we remember."""
+    if remembered:
+        previously = "; ".join(remembered)
+        return (
+            f"This is turn {next_turn}. I remember you previously said: "
+            f"[{previously}]. Now you said: '{incoming}'."
+        )
+    return (
+        f"This is turn {next_turn}. I have no earlier memory yet. "
+        f"You just said: '{incoming}'."
+    )
+
+
+def _generate_reply(remembered: list, incoming: str, next_turn: int) -> str:
+    """If OPENROUTER_API_KEY is set, ask the LLM to answer using the remembered
+    conversation as context, so it genuinely 'remembers' (e.g. your name).
+    Falls back to the offline template if there's no key or the call fails."""
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return _offline_reply(remembered, incoming, next_turn)
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+        memory_block = "\n".join(f"- {m}" for m in remembered) or "(nothing yet)"
+        system = (
+            "You are a friendly assistant that REMEMBERS this conversation. "
+            "Everything the user has told you so far, oldest first:\n"
+            f"{memory_block}\n"
+            "Reply naturally and concisely. When they ask what you remember "
+            "(like their name), recall it from the list above."
+        )
+        completion = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": incoming},
+            ],
+        )
+        return completion.choices[0].message.content.strip()
+    except Exception as exc:  # keep the demo resilient in the classroom
+        return f"(LLM unavailable: {exc}) " + _offline_reply(remembered, incoming, next_turn)
+
+
+# ---------------------------------------------------------------------------
 # 2. THE ONE NODE  --  reads remembered history, builds a reply, appends a turn
 # ---------------------------------------------------------------------------
 def respond(state: MemState) -> dict:
@@ -72,19 +131,9 @@ def respond(state: MemState) -> dict:
     # `turn` is the saved counter; the NEXT turn number is one more than that.
     next_turn = state.get("turn", 0) + 1
 
-    # Build a reply that EXPLICITLY references what we remember, so learners can
-    # see the memory being used.
-    if remembered:
-        previously = "; ".join(remembered)
-        reply = (
-            f"This is turn {next_turn}. I remember you previously said: "
-            f"[{previously}]. Now you said: '{incoming}'."
-        )
-    else:
-        reply = (
-            f"This is turn {next_turn}. I have no earlier memory yet. "
-            f"You just said: '{incoming}'."
-        )
+    # Build the reply. If a key is set, the LLM answers using the remembered
+    # conversation (so it can recall facts you told it). Otherwise a template.
+    reply = _generate_reply(remembered, incoming, next_turn)
 
     # Return only the PARTIAL update. Thanks to the reducers:
     #   - history: [incoming]  is APPENDED to the saved history (list + list)
@@ -185,7 +234,7 @@ def repl() -> None:
     print("Commands:")
     print("  :user <name>   switch thread_id (new OR existing -> existing resumes!)")
     print("  :mem           show the full remembered state for the current thread")
-    print("  :q             quit")
+    print("  :q / quit / exit   quit")
     print("-" * 70)
 
     current = "alice"
@@ -200,7 +249,7 @@ def repl() -> None:
         if not line:
             continue
 
-        if line == ":q":
+        if line.lower() in (":q", ":quit", ":exit", "quit", "exit"):
             print("bye!")
             break
 

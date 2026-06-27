@@ -24,6 +24,7 @@ skills-lock.json
 # private instructor materials — intentionally NOT published
 INSTRUCTOR_GUIDE.md
 lesson.html
+explainers/
 
 # retired examples (dropped from the lesson)
 storygen.py
