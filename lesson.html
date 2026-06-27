@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LangGraph from Scratch</title>
+<style>
+  :root{
+    /* surfaces */
+    --bg:#ffffff;
+    --surface:#f7f7f8;
+    --surface-2:#f0f0f1;
+    --border:#e5e5e5;
+    --border-strong:#d9d9da;
+    /* ink */
+    --ink:#0d0d0d;
+    --ink-2:#1a1a1a;
+    --muted:#6b6b70;
+    --muted-2:#8a8a90;
+    /* accent */
+    --accent:#10a37f;
+    --accent-ink:#0c7d61;
+    --accent-soft:#e7f6f1;
+    /* type */
+    --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    /* metrics */
+    --maxw:1100px;
+    --pad:clamp(32px,5vw,88px);
+    --radius:12px;
+    --ease:cubic-bezier(.22,.61,.36,1);
+  }
+
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--sans);
+    font-size:clamp(18px,1.7vw,22px);
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+    overflow:hidden;
+  }
+
+  /* ——— top progress bar ——— */
+  .progress{
+    position:fixed;top:0;left:0;height:4px;width:0%;
+    background:var(--accent);
+    z-index:50;
+    transition:width .45s var(--ease);
+    box-shadow:0 0 0 .5px rgba(16,163,127,.25);
+  }
+
+  /* ——— deck chrome ——— */
+  .deck-title{
+    position:fixed;left:var(--pad);bottom:22px;z-index:40;
+    font-size:14px;font-weight:600;letter-spacing:.02em;
+    color:var(--muted-2);
+    pointer-events:none;
+  }
+  .counter{
+    position:fixed;right:var(--pad);bottom:22px;z-index:40;
+    font-family:var(--mono);font-size:14px;font-weight:600;
+    color:var(--muted);letter-spacing:.04em;
+    pointer-events:none;
+  }
+  .counter b{color:var(--ink);}
+
+  /* ——— slide container ——— */
+  .deck{position:relative;height:100vh;width:100vw;}
+  .slide{
+    position:absolute;inset:0;
+    display:none;
+    padding:var(--pad);
+    overflow:auto;
+  }
+  .slide.active{display:flex;}
+  .slide-inner{
+    margin:auto;
+    width:100%;
+    max-width:var(--maxw);
+    display:flex;flex-direction:column;
+    gap:clamp(16px,2.4vw,28px);
+  }
+
+  /* center-weighted variant for title slides */
+  .slide.center .slide-inner{align-items:flex-start;text-align:left;}
+
+  /* ——— entrance animation ——— */
+  @keyframes riseIn{
+    from{opacity:0;transform:translateY(14px);}
+    to{opacity:1;transform:translateY(0);}
+  }
+  .slide.active .slide-inner>*{
+    opacity:0;
+    animation:riseIn .55s var(--ease) forwards;
+  }
+  .slide.active .slide-inner>*:nth-child(1){animation-delay:.05s;}
+  .slide.active .slide-inner>*:nth-child(2){animation-delay:.13s;}
+  .slide.active .slide-inner>*:nth-child(3){animation-delay:.21s;}
+  .slide.active .slide-inner>*:nth-child(4){animation-delay:.29s;}
+  .slide.active .slide-inner>*:nth-child(5){animation-delay:.37s;}
+  .slide.active .slide-inner>*:nth-child(6){animation-delay:.45s;}
+  .slide.active .slide-inner>*:nth-child(n+7){animation-delay:.5s;}
+  @media (prefers-reduced-motion:reduce){
+    .slide.active .slide-inner>*{animation:none;opacity:1;}
+    .progress{transition:none;}
+  }
+
+  /* ——— typography ——— */
+  .kicker{
+    font-size:14px;font-weight:700;
+    text-transform:uppercase;letter-spacing:.16em;
+    color:var(--accent-ink);
+    margin:0;
+  }
+  h1{
+    font-size:clamp(40px,6.2vw,76px);
+    line-height:1.04;
+    font-weight:800;
+    letter-spacing:-.025em;
+    margin:0;
+    color:var(--ink);
+  }
+  h2{
+    font-size:clamp(30px,4.4vw,52px);
+    line-height:1.1;
+    font-weight:800;
+    letter-spacing:-.02em;
+    margin:0;
+  }
+  h3{
+    font-size:clamp(21px,2.4vw,28px);
+    line-height:1.25;
+    font-weight:700;
+    letter-spacing:-.01em;
+    margin:0;
+    color:var(--ink-2);
+  }
+  p{margin:0;color:var(--ink-2);max-width:34em;}
+  .lead{font-size:clamp(20px,2.2vw,28px);color:var(--muted);max-width:30em;}
+  strong,b{font-weight:700;color:var(--ink);}
+  .em{color:var(--accent-ink);font-weight:700;}
+  a{color:var(--accent-ink);text-decoration:none;border-bottom:2px solid var(--accent-soft);}
+  a:hover{border-bottom-color:var(--accent);}
+
+  /* ——— lists ——— */
+  ul.bullets{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:14px;}
+  ul.bullets li{
+    position:relative;padding-left:34px;
+    color:var(--ink-2);max-width:32em;
+  }
+  ul.bullets li::before{
+    content:"";position:absolute;left:6px;top:.62em;
+    width:9px;height:9px;border-radius:50%;
+    background:var(--accent);
+  }
+  ul.bullets li b{color:var(--ink);}
+
+  /* ——— two-column layout ——— */
+  .cols{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:clamp(24px,3.4vw,48px);
+    align-items:start;
+  }
+  .cols.wide-left{grid-template-columns:1.25fr .85fr;}
+  .cols.wide-right{grid-template-columns:.85fr 1.25fr;}
+  .col{display:flex;flex-direction:column;gap:16px;min-width:0;}
+  @media (max-width:820px){.cols,.cols.wide-left,.cols.wide-right{grid-template-columns:1fr;}}
+
+  /* ——— code block ——— */
+  .code{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:22px 24px;
+    overflow:auto;
+    box-shadow:0 1px 2px rgba(13,13,13,.04);
+  }
+  .code pre{margin:0;}
+  .code code{
+    font-family:var(--mono);
+    font-size:clamp(15px,1.35vw,18px);
+    line-height:1.7;
+    color:var(--ink);
+    white-space:pre;
+    display:block;
+  }
+  /* syntax tokens */
+  .tok-kw{color:#8250df;font-weight:600;}        /* keyword */
+  .tok-str{color:#0a7d34;}                         /* string */
+  .tok-com{color:var(--muted-2);font-style:italic;}/* comment */
+  .tok-fn{color:#0b69c7;}                           /* function */
+  .tok-lg{color:var(--accent-ink);font-weight:700;}/* LangGraph call */
+
+  /* explanation caption directly under code */
+  .explain{
+    margin:10px 2px 0;
+    font-size:15px;line-height:1.55;
+    color:var(--muted);
+    border-left:3px solid var(--border-strong);
+    padding-left:14px;
+    max-width:38em;
+  }
+  .explain b{color:var(--ink-2);}
+
+  /* ——— callout ——— */
+  .callout{
+    background:var(--accent-soft);
+    border:1px solid #cfeee3;
+    border-left:5px solid var(--accent);
+    border-radius:var(--radius);
+    padding:18px 22px;
+    color:var(--ink-2);
+    max-width:40em;
+  }
+  .callout .callout-label{
+    display:block;font-size:13px;font-weight:700;
+    text-transform:uppercase;letter-spacing:.12em;
+    color:var(--accent-ink);margin-bottom:6px;
+  }
+  .callout.warn{background:#fff6e9;border-color:#f3d9a8;border-left-color:#e0922a;}
+  .callout.warn .callout-label{color:#b06a12;}
+
+  /* ——— pill / tag for START / END ——— */
+  .pill{
+    display:inline-flex;align-items:center;gap:8px;
+    font-family:var(--mono);font-size:14px;font-weight:700;
+    letter-spacing:.05em;
+    padding:6px 14px;border-radius:999px;
+  }
+  .pill.start{background:var(--accent);color:#fff;}
+  .pill.end{background:var(--ink);color:#fff;}
+  .pill.node{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--border);}
+
+  /* ——— diagram column helpers ——— */
+  .diagram{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:28px;
+    display:flex;flex-direction:column;align-items:center;gap:14px;
+  }
+  .diagram .arrow{color:var(--muted-2);font-size:22px;line-height:1;}
+  .diagram .box{
+    width:100%;text-align:center;
+    background:#fff;border:1.5px solid var(--border-strong);
+    border-radius:10px;padding:14px 18px;
+    font-weight:700;color:var(--ink-2);
+  }
+  .diagram .box.accent{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-soft);}
+
+  /* svg diagram wrapper */
+  .svg-wrap{
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius);padding:20px;
+  }
+  .svg-wrap svg{width:100%;height:auto;display:block;}
+  text{font-family:var(--sans);}
+
+  /* utility */
+  .muted{color:var(--muted);}
+  .mono{font-family:var(--mono);}
+  .stack-sm{display:flex;flex-direction:column;gap:10px;}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;}
+  @media (max-width:820px){.grid3{grid-template-columns:1fr;}}
+  .card{
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius);padding:18px 20px;
+    display:flex;flex-direction:column;gap:8px;
+  }
+  .card h3{font-size:20px;}
+  .card p{font-size:16px;color:var(--muted);}
+</style>
+</head>
+<body>
+  <div class="progress"></div>
+  <div class="deck-title">LangGraph - From Scratch</div>
+  <div class="counter"><b id="cur">1</b> / <span id="tot">0</span></div>
+
+  <main class="deck">
+
+    <!-- 1) TITLE -->
+    <section class="slide center">
+      <div class="slide-inner">
+        <p class="kicker">A Beginner's Guide</p>
+        <h1>LangGraph<br>from Scratch</h1>
+        <p class="lead">The three building blocks &mdash; State, Nodes, Edges &mdash; taught through three real example files.</p>
+        <div><span class="pill start">START</span></div>
+        <p class="muted mono" style="font-size:14px;">Built &amp; verified on LangGraph 1.x</p>
+      </div>
+    </section>
+
+    <!-- 2) WHAT IS LANGGRAPH -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Why this exists</p>
+        <h2>What is LangGraph &mdash; and why a graph?</h2>
+        <div class="cols">
+          <div class="col">
+            <p>LangGraph lets you wire small Python functions into a <b>graph</b> that runs them in order, passing a shared <b>state</b> from one step to the next.</p>
+            <ul class="bullets">
+              <li><b>A plain script</b> runs top to bottom. To branch or loop you hand-write <span class="mono">if</span> and <span class="mono">while</span> tangles that get messy fast.</li>
+              <li><b>A graph</b> makes the flow <b>explicit data</b>: nodes do work, edges decide what runs next &mdash; including branches and waiting for a human.</li>
+            </ul>
+          </div>
+          <div class="col">
+            <div class="callout">
+              <span class="callout-label">Key idea</span>
+              You describe <b>what runs</b> and <b>what runs next</b>. LangGraph handles passing state through, branching, and pausing &mdash; so the control flow is something you can <span class="em">see</span>, not bury in code.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3) THREE BUILDING BLOCKS OVERVIEW -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">The whole course in one picture</p>
+        <h2>Three building blocks: State &middot; Nodes &middot; Edges</h2>
+        <div class="svg-wrap">
+          <svg viewBox="0 0 920 200" role="img" aria-label="State flows through nodes connected by edges">
+            <defs>
+              <marker id="ah" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L8,3 L0,6 Z" fill="#8a8a90"/>
+              </marker>
+            </defs>
+            <rect x="20" y="18" width="880" height="34" rx="8" fill="#e7f6f1" stroke="#cfeee3"/>
+            <text x="460" y="40" text-anchor="middle" font-size="16" font-weight="700" fill="#0c7d61">STATE — one shared dictionary flows left to right</text>
+            <rect x="20" y="116" width="120" height="48" rx="24" fill="#10a37f"/>
+            <text x="80" y="146" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">START</text>
+            <rect x="200" y="112" width="180" height="56" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+            <text x="290" y="146" text-anchor="middle" font-size="16" font-weight="700" fill="#1a1a1a">node A</text>
+            <rect x="440" y="112" width="180" height="56" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+            <text x="530" y="146" text-anchor="middle" font-size="16" font-weight="700" fill="#1a1a1a">node B</text>
+            <rect x="680" y="116" width="120" height="48" rx="24" fill="#0d0d0d"/>
+            <text x="740" y="146" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">END</text>
+            <line x1="140" y1="140" x2="196" y2="140" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah)"/>
+            <line x1="380" y1="140" x2="436" y2="140" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah)"/>
+            <line x1="620" y1="140" x2="676" y2="140" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah)"/>
+            <text x="168" y="104" text-anchor="middle" font-size="12" fill="#8a8a90">edge</text>
+            <text x="408" y="104" text-anchor="middle" font-size="12" fill="#8a8a90">edge</text>
+            <text x="648" y="104" text-anchor="middle" font-size="12" fill="#8a8a90">edge</text>
+          </svg>
+        </div>
+        <div class="grid3">
+          <div class="card"><h3>State</h3><p>The shared data that travels through every step.</p></div>
+          <div class="card"><h3>Nodes</h3><p>Functions that read state and return updates.</p></div>
+          <div class="card"><h3>Edges</h3><p>Connections that decide what runs next.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4) STATE -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Building block 1</p>
+        <h2>State</h2>
+        <div class="cols wide-left">
+          <div class="col">
+            <div class="code"><pre><code><span class="tok-kw">from</span> typing <span class="tok-kw">import</span> Optional
+<span class="tok-kw">from</span> typing_extensions <span class="tok-kw">import</span> TypedDict
+
+<span class="tok-kw">class</span> <span class="tok-fn">GraphState</span>(TypedDict):
+    question: Optional[str]
+    classification: Optional[str]
+    response: Optional[str]</code></pre></div>
+            <p class="explain"><b>What this does:</b> declares the typed shape of the data that travels between nodes.</p>
+          </div>
+          <div class="col">
+            <p>State is a shared dictionary (a <span class="mono">TypedDict</span>) that flows through the whole graph.</p>
+            <ul class="bullets">
+              <li>Every node <b>receives</b> the current state.</li>
+              <li>Every node <b>returns a partial dict</b> that LangGraph merges back in.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5) NODES -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Building block 2</p>
+        <h2>Nodes</h2>
+        <div class="cols wide-left">
+          <div class="col">
+            <div class="code"><pre><code><span class="tok-kw">def</span> <span class="tok-fn">classify_input_node</span>(state: GraphState) -&gt; <span class="tok-kw">dict</span>:
+    question = (state.<span class="tok-fn">get</span>(<span class="tok-str">"question"</span>) <span class="tok-kw">or</span> <span class="tok-str">""</span>).<span class="tok-fn">strip</span>()
+    <span class="tok-kw">return</span> {<span class="tok-str">"classification"</span>: <span class="tok-fn">classify</span>(question)}</code></pre></div>
+            <p class="explain"><b>What this does:</b> a node reads one field from state and returns the field it computed.</p>
+          </div>
+          <div class="col">
+            <p>A node is just a plain Python function. It does <b>one step of work</b>.</p>
+            <ul class="bullets">
+              <li>Takes <b>the state</b> as input.</li>
+              <li>Returns a <b>partial dict</b> of updates &mdash; not the whole state.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6) EDGES incl CONDITIONAL -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Building block 3</p>
+        <h2>Edges &mdash; including conditional</h2>
+        <div class="cols">
+          <div class="col">
+            <div class="code"><pre><code>workflow.<span class="tok-lg">add_edge</span>(<span class="tok-lg">START</span>, <span class="tok-str">"classify_input"</span>)
+workflow.<span class="tok-lg">add_conditional_edges</span>(
+    <span class="tok-str">"classify_input"</span>,
+    decide_next_node,
+    {<span class="tok-str">"handle_greeting"</span>: <span class="tok-str">"handle_greeting"</span>,
+     <span class="tok-str">"handle_search"</span>: <span class="tok-str">"handle_search"</span>},
+)</code></pre></div>
+            <p class="explain"><b>What this does:</b> wires the entry edge, then branches to one of two nodes based on the router's return value.</p>
+          </div>
+          <div class="col">
+            <p>A <b>plain edge</b> always goes A &rarr; B. A <b>conditional edge</b> runs a router function whose return value (mapped to a node name) picks the branch.</p>
+            <div class="svg-wrap">
+              <svg viewBox="0 0 360 220" role="img" aria-label="A router branching to two nodes">
+                <defs>
+                  <marker id="ah2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                    <path d="M0,0 L8,3 L0,6 Z" fill="#8a8a90"/>
+                  </marker>
+                </defs>
+                <rect x="110" y="14" width="140" height="50" rx="10" fill="#e7f6f1" stroke="#10a37f" stroke-width="1.5"/>
+                <text x="180" y="44" text-anchor="middle" font-size="15" font-weight="700" fill="#0c7d61">router</text>
+                <rect x="10" y="150" width="150" height="50" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+                <text x="85" y="180" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1a1a">greeting</text>
+                <rect x="200" y="150" width="150" height="50" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+                <text x="275" y="180" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1a1a">search</text>
+                <path d="M150,64 L90,146" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah2)"/>
+                <path d="M210,64 L270,146" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah2)"/>
+                <text x="95" y="118" text-anchor="middle" font-size="11" fill="#8a8a90">if greeting</text>
+                <text x="268" y="118" text-anchor="middle" font-size="11" fill="#8a8a90">else</text>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7) LIFECYCLE -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Putting it together</p>
+        <h2>The lifecycle: build &rarr; compile &rarr; invoke</h2>
+        <div class="svg-wrap">
+          <svg viewBox="0 0 940 130" role="img" aria-label="Lifecycle steps from StateGraph to invoke">
+            <defs>
+              <marker id="ah3" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L8,3 L0,6 Z" fill="#8a8a90"/>
+              </marker>
+            </defs>
+            <g font-size="15" font-weight="700">
+              <rect x="10" y="38" width="150" height="56" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+              <text x="85" y="62" text-anchor="middle" fill="#1a1a1a">StateGraph</text>
+              <text x="85" y="81" text-anchor="middle" font-size="11" font-weight="400" fill="#8a8a90">(State)</text>
+              <rect x="200" y="38" width="150" height="56" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+              <text x="275" y="70" text-anchor="middle" fill="#1a1a1a">add_node</text>
+              <rect x="390" y="38" width="170" height="56" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+              <text x="475" y="62" text-anchor="middle" fill="#1a1a1a">add_edge</text>
+              <text x="475" y="81" text-anchor="middle" font-size="11" font-weight="400" fill="#8a8a90">START / END</text>
+              <rect x="600" y="38" width="150" height="56" rx="10" fill="#e7f6f1" stroke="#10a37f" stroke-width="1.5"/>
+              <text x="675" y="70" text-anchor="middle" fill="#0c7d61">compile()</text>
+              <rect x="790" y="38" width="140" height="56" rx="10" fill="#0d0d0d"/>
+              <text x="860" y="70" text-anchor="middle" fill="#fff">invoke()</text>
+              <line x1="160" y1="66" x2="196" y2="66" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah3)"/>
+              <line x1="350" y1="66" x2="386" y2="66" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah3)"/>
+              <line x1="560" y1="66" x2="596" y2="66" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah3)"/>
+              <line x1="750" y1="66" x2="786" y2="66" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah3)"/>
+            </g>
+          </svg>
+        </div>
+        <div class="cols">
+          <div class="col">
+            <div class="code"><pre><code>app = workflow.<span class="tok-fn">compile</span>()
+result = app.<span class="tok-lg">invoke</span>({<span class="tok-str">"question"</span>: <span class="tok-str">"Hi, how are you?"</span>})
+<span class="tok-fn">print</span>(result)</code></pre></div>
+            <p class="explain"><b>What this does:</b> compiles the graph definition into a runnable object and executes it with an initial state.</p>
+          </div>
+          <div class="col">
+            <div class="callout">
+              <span class="callout-label">Key idea</span>
+              The graph is just <b>data</b> until you <b>compile</b> it. <span class="mono">invoke()</span> then runs it from <span class="mono">START</span> to <span class="mono">END</span>.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8a) EXAMPLE 1 INTRO -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Example 1 &middot; teaches Conditional Edges</p>
+        <h2>simple_graph.py</h2>
+        <p class="lead">A tiny graph that <b>classifies a question</b> and <b>routes it</b> to the right handler.</p>
+        <p>Two kinds of node, side by side: <span class="mono">handle_greeting</span> is a plain canned reply, while <span class="mono">handle_search</span> calls an <b>LLM via OpenRouter</b> &mdash; proof that an LLM node is just a node.</p>
+        <div class="callout">
+          <span class="callout-label">Why it matters</span>
+          <b>Conditional edges:</b> a router function reads state and picks which node runs next.
+        </div>
+      </div>
+    </section>
+
+    <!-- 8b) EXAMPLE 1 FLOW DIAGRAM -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Example 1 &middot; the flow</p>
+        <h2>How it runs</h2>
+        <div class="cols">
+          <div class="col">
+            <div class="svg-wrap">
+              <svg viewBox="0 0 380 320" role="img" aria-label="simple_graph flow with conditional router">
+                <defs>
+                  <marker id="ah4" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                    <path d="M0,0 L8,3 L0,6 Z" fill="#8a8a90"/>
+                  </marker>
+                </defs>
+                <rect x="130" y="10" width="120" height="44" rx="22" fill="#10a37f"/>
+                <text x="190" y="38" text-anchor="middle" font-size="15" font-weight="700" fill="#fff">START</text>
+                <rect x="100" y="90" width="180" height="50" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+                <text x="190" y="120" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1a1a">classify_input</text>
+                <rect x="10" y="190" width="160" height="50" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+                <text x="90" y="220" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a1a">handle_greeting</text>
+                <rect x="210" y="190" width="160" height="50" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+                <text x="290" y="220" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a1a">handle_search</text>
+                <rect x="130" y="270" width="120" height="44" rx="22" fill="#0d0d0d"/>
+                <text x="190" y="298" text-anchor="middle" font-size="15" font-weight="700" fill="#fff">END</text>
+                <line x1="190" y1="54" x2="190" y2="86" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah4)"/>
+                <path d="M140,140 L95,186" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah4)"/>
+                <path d="M240,140 L285,186" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah4)"/>
+                <path d="M95,240 L165,272" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah4)"/>
+                <path d="M285,240 L215,272" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah4)"/>
+                <text x="98" y="170" text-anchor="middle" font-size="11" fill="#8a8a90">greeting</text>
+                <text x="300" y="170" text-anchor="middle" font-size="11" fill="#8a8a90">else</text>
+                <text x="190" y="164" text-anchor="middle" font-size="10" fill="#0c7d61">conditional</text>
+              </svg>
+            </div>
+          </div>
+          <div class="col">
+            <ul class="bullets">
+              <li><b>1. Define state</b> &mdash; holds question, classification, response.</li>
+              <li><b>2. Classify</b> &mdash; START flows into classify_input, tagging the question as <span class="mono">greeting</span> or <span class="mono">search</span>.</li>
+              <li><b>3. Route</b> &mdash; the router reads classification and returns the next node's name.</li>
+              <li><b>4. Handle</b> &mdash; handle_greeting (canned) or handle_search (calls OpenRouter) runs and sets response.</li>
+              <li><b>5. Finish</b> &mdash; both branches go to END; invoke returns the merged state.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8c) EXAMPLE 1 SNIPPETS -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Example 1 &middot; the code</p>
+        <h2>The node, the router, the wiring</h2>
+        <div class="cols">
+          <div class="col">
+            <div class="code"><pre><code><span class="tok-kw">def</span> <span class="tok-fn">classify_input_node</span>(state: GraphState) -&gt; <span class="tok-kw">dict</span>:
+    question = (state.<span class="tok-fn">get</span>(<span class="tok-str">"question"</span>) <span class="tok-kw">or</span> <span class="tok-str">""</span>).<span class="tok-fn">strip</span>()
+    <span class="tok-kw">return</span> {<span class="tok-str">"classification"</span>: <span class="tok-fn">classify</span>(question)}
+
+<span class="tok-kw">def</span> <span class="tok-fn">decide_next_node</span>(state: GraphState) -&gt; <span class="tok-kw">str</span>:
+    <span class="tok-kw">return</span> <span class="tok-str">"handle_greeting"</span> <span class="tok-kw">if</span> \
+        state.<span class="tok-fn">get</span>(<span class="tok-str">"classification"</span>) == <span class="tok-str">"greeting"</span> \
+        <span class="tok-kw">else</span> <span class="tok-str">"handle_search"</span></code></pre></div>
+            <p class="explain"><b>What this does:</b> the node tags the question; the router returns the name of the next node to run based on that tag.</p>
+          </div>
+          <div class="col">
+            <div class="code"><pre><code>workflow.<span class="tok-lg">add_edge</span>(<span class="tok-lg">START</span>, <span class="tok-str">"classify_input"</span>)
+workflow.<span class="tok-lg">add_conditional_edges</span>(
+    <span class="tok-str">"classify_input"</span>,
+    decide_next_node,
+    {<span class="tok-str">"handle_greeting"</span>: <span class="tok-str">"handle_greeting"</span>,
+     <span class="tok-str">"handle_search"</span>: <span class="tok-str">"handle_search"</span>},
+)
+workflow.<span class="tok-lg">add_edge</span>(<span class="tok-str">"handle_greeting"</span>, <span class="tok-lg">END</span>)
+workflow.<span class="tok-lg">add_edge</span>(<span class="tok-str">"handle_search"</span>, <span class="tok-lg">END</span>)</code></pre></div>
+            <p class="explain"><b>What this does:</b> START enters classify_input, the router picks a branch, and both branches end at END.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8d) EXAMPLE 1 OUTPUT -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Example 1 &middot; run it</p>
+        <h2>Compile, invoke, and the real output</h2>
+        <div class="cols">
+          <div class="col">
+            <div class="code"><pre><code>app = workflow.<span class="tok-fn">compile</span>()
+<span class="tok-com"># greeting branch (plain node)</span>
+<span class="tok-fn">print</span>(app.<span class="tok-lg">invoke</span>({<span class="tok-str">"question"</span>: <span class="tok-str">"Hi, how are you?"</span>}))
+<span class="tok-com"># search branch (LLM via OpenRouter)</span>
+<span class="tok-fn">print</span>(app.<span class="tok-lg">invoke</span>({<span class="tok-str">"question"</span>: <span class="tok-str">"What is LangGraph?"</span>}))</code></pre></div>
+            <p class="explain"><b>What this does:</b> compiles the graph, then runs it twice &mdash; each input takes a different branch.</p>
+          </div>
+          <div class="col">
+            <div class="code"><pre><code><span class="tok-com"># $ python simple_graph.py</span>
+{<span class="tok-str">'question'</span>: <span class="tok-str">'Hi, how are you?'</span>,
+ <span class="tok-str">'classification'</span>: <span class="tok-str">'greeting'</span>,
+ <span class="tok-str">'response'</span>: <span class="tok-str">'Hello! How can I help you today?'</span>}
+
+{<span class="tok-str">'question'</span>: <span class="tok-str">'What is LangGraph?'</span>,
+ <span class="tok-str">'classification'</span>: <span class="tok-str">'search'</span>,
+ <span class="tok-str">'response'</span>: <span class="tok-str">'LangGraph is a framework for building '</span>
+             <span class="tok-str">'stateful, multi-step LLM apps as graphs.'</span>}</code></pre></div>
+            <p class="explain"><b>What this does:</b> two merged states &mdash; greeting ran the plain node; search ran the <b>LLM</b> node and filled <span class="mono">response</span> from OpenRouter.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9a) EXAMPLE 2 INTRO + IN/OUT/MERGE -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Example 2 &middot; teaches How State Transfers</p>
+        <h2>state_flow_demo.py &mdash; Watch state move</h2>
+        <div class="cols">
+          <div class="col">
+            <p>An <b>interactive console tool</b> (no UI, no API key) whose only job is to make the invisible visible: it prints every <b>IN &rarr; OUT &rarr; MERGE</b> as data moves between nodes.</p>
+            <ul class="bullets">
+              <li><b>IN</b> &mdash; the full state handed <i>into</i> a node.</li>
+              <li><b>OUT</b> &mdash; the <b>partial dict</b> the node returned.</li>
+              <li><b>MERGE</b> &mdash; the state <i>after</i> LangGraph merges that partial back in.</li>
+            </ul>
+            <p class="muted" style="font-size:16px;">Type a message and press Enter to step the graph <b>one node at a time</b> (STEP mode); <span class="mono">:auto</span> runs straight through, <span class="mono">:stream</span> shows LangGraph's native view.</p>
+          </div>
+          <div class="col">
+            <div class="svg-wrap">
+              <svg viewBox="0 0 360 250" role="img" aria-label="One node: state in, partial out, merged back">
+                <defs>
+                  <marker id="ah5" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                    <path d="M0,0 L8,3 L0,6 Z" fill="#8a8a90"/>
+                  </marker>
+                </defs>
+                <rect x="60" y="10" width="240" height="44" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+                <text x="180" y="30" text-anchor="middle" font-size="12" fill="#8a8a90">IN — full state</text>
+                <text x="180" y="46" text-anchor="middle" font-size="12" font-family="monospace" fill="#1a1a1a">{text, tokens, …, steps}</text>
+                <rect x="100" y="98" width="160" height="50" rx="10" fill="#e7f6f1" stroke="#10a37f" stroke-width="1.5"/>
+                <text x="180" y="128" text-anchor="middle" font-size="14" font-weight="700" fill="#0c7d61">node</text>
+                <rect x="60" y="192" width="240" height="48" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+                <text x="180" y="211" text-anchor="middle" font-size="12" fill="#8a8a90">OUT — partial dict → MERGE</text>
+                <text x="180" y="228" text-anchor="middle" font-size="12" font-family="monospace" fill="#0c7d61">{category, steps:[…,"analyze"]}</text>
+                <line x1="180" y1="54" x2="180" y2="94" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah5)"/>
+                <line x1="180" y1="148" x2="180" y2="188" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah5)"/>
+              </svg>
+            </div>
+            <div class="callout">
+              <span class="callout-label">Key idea</span>
+              A node never returns the whole state &mdash; just the keys it changed. LangGraph <b>merges</b> that partial back in for the next node.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9b) EXAMPLE 2 TOPOLOGY -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Example 2 &middot; the topology</p>
+        <h2>ingest &rarr; analyze &rarr; route &rarr; finalize</h2>
+        <div class="svg-wrap">
+          <svg viewBox="0 0 980 300" role="img" aria-label="state_flow_demo topology with a three-way router">
+            <defs>
+              <marker id="ah6" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L8,3 L0,6 Z" fill="#8a8a90"/>
+              </marker>
+            </defs>
+            <rect x="20" y="120" width="96" height="46" rx="23" fill="#10a37f"/>
+            <text x="68" y="148" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">START</text>
+            <rect x="150" y="119" width="120" height="48" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+            <text x="210" y="148" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1a1a">ingest</text>
+            <rect x="304" y="119" width="120" height="48" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+            <text x="364" y="148" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1a1a">analyze</text>
+            <rect x="458" y="116" width="120" height="54" rx="10" fill="#e7f6f1" stroke="#10a37f" stroke-width="1.5"/>
+            <text x="518" y="139" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0c7d61">router</text>
+            <text x="518" y="157" text-anchor="middle" font-size="10" fill="#0c7d61">route_by_category</text>
+            <rect x="630" y="20" width="170" height="46" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+            <text x="715" y="48" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a1a">handle_faq</text>
+            <rect x="630" y="120" width="170" height="46" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+            <text x="715" y="148" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a1a">handle_smalltalk</text>
+            <rect x="630" y="220" width="170" height="46" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+            <text x="715" y="248" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a1a">escalate</text>
+            <rect x="838" y="119" width="110" height="48" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+            <text x="893" y="148" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a1a">finalize</text>
+            <rect x="838" y="222" width="110" height="46" rx="23" fill="#0d0d0d"/>
+            <text x="893" y="250" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">END</text>
+            <line x1="116" y1="143" x2="146" y2="143" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah6)"/>
+            <line x1="270" y1="143" x2="300" y2="143" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah6)"/>
+            <line x1="424" y1="143" x2="454" y2="143" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah6)"/>
+            <path d="M578,134 L626,52" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah6)"/>
+            <path d="M578,143 L626,143" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah6)"/>
+            <path d="M578,152 L626,234" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah6)"/>
+            <path d="M800,46 L860,115" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah6)"/>
+            <line x1="800" y1="143" x2="834" y2="143" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah6)"/>
+            <path d="M800,240 L860,167" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah6)"/>
+            <line x1="893" y1="167" x2="893" y2="218" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah6)"/>
+            <text x="601" y="92" text-anchor="middle" font-size="10" fill="#8a8a90">faq</text>
+            <text x="601" y="135" text-anchor="middle" font-size="10" fill="#8a8a90">smalltalk</text>
+            <text x="601" y="205" text-anchor="middle" font-size="10" fill="#8a8a90">else</text>
+          </svg>
+        </div>
+        <p class="muted" style="font-size:16px;">After <span class="mono">analyze</span>, the router returns one of <span class="mono">faq / smalltalk / else</span> &mdash; the three branches all converge on <span class="mono">finalize</span>, then END.</p>
+      </div>
+    </section>
+
+    <!-- 9c) EXAMPLE 2 CODE -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Example 2 &middot; the code</p>
+        <h2>A partial-returning node + the router</h2>
+        <div class="cols">
+          <div class="col">
+            <div class="code"><pre><code><span class="tok-kw">def</span> <span class="tok-fn">analyze</span>(state: ChatState) -&gt; <span class="tok-kw">dict</span>:
+    tokens = state.<span class="tok-fn">get</span>(<span class="tok-str">"tokens"</span>) <span class="tok-kw">or</span> []
+    category = <span class="tok-fn">categorize</span>(tokens)   <span class="tok-com"># faq / smalltalk / other</span>
+    <span class="tok-kw">return</span> {
+        <span class="tok-str">"category"</span>: category,
+        <span class="tok-str">"sentiment"</span>: <span class="tok-fn">judge</span>(tokens),
+        <span class="tok-str">"steps"</span>: state[<span class="tok-str">"steps"</span>] + [<span class="tok-str">"analyze"</span>],
+    }</code></pre></div>
+            <p class="explain"><b>What this does:</b> reads <span class="mono">tokens</span>, returns only the keys it changed. <span class="mono">steps</span> is rebuilt by hand (old list + new name) because a plain TypedDict <b>replaces</b> lists on merge.</p>
+          </div>
+          <div class="col">
+            <div class="code"><pre><code><span class="tok-kw">def</span> <span class="tok-fn">route_by_category</span>(state: ChatState) -&gt; <span class="tok-kw">str</span>:
+    cat = state.<span class="tok-fn">get</span>(<span class="tok-str">"category"</span>)
+    <span class="tok-kw">return</span> {<span class="tok-str">"faq"</span>: <span class="tok-str">"handle_faq"</span>,
+            <span class="tok-str">"smalltalk"</span>: <span class="tok-str">"handle_smalltalk"</span>
+           }.<span class="tok-fn">get</span>(cat, <span class="tok-str">"escalate"</span>)
+
+workflow.<span class="tok-lg">add_conditional_edges</span>(
+    <span class="tok-str">"analyze"</span>, route_by_category,
+    {<span class="tok-str">"handle_faq"</span>: <span class="tok-str">"handle_faq"</span>,
+     <span class="tok-str">"handle_smalltalk"</span>: <span class="tok-str">"handle_smalltalk"</span>,
+     <span class="tok-str">"escalate"</span>: <span class="tok-str">"escalate"</span>})</code></pre></div>
+            <p class="explain"><b>What this does:</b> the router reads <span class="mono">category</span> and returns the next node's <b>name</b>; the mapping turns that string into the branch LangGraph jumps to.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9d) EXAMPLE 2 CONSOLE TRACE -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Example 2 &middot; see the transfer</p>
+        <h2>The console trace</h2>
+        <div class="cols">
+          <div class="col">
+            <div class="code"><pre><code><span class="tok-com"># type: "please cancel my invoice"</span>
+<span class="tok-com">EDGE: START  ──&gt;  ingest</span>
+  IN    state   = {text='please cancel my invoice', steps=[]}
+  OUT   partial = {tokens=[...], steps=['ingest']}
+  MERGE state   = {... steps=['ingest']}
+
+<span class="tok-com">EDGE: ingest  ──&gt;  analyze</span>
+  IN    state   = {... steps=['ingest']}
+  OUT   partial = {category='faq', steps=['ingest','analyze']}
+ROUTER route_by_category: category='faq' =&gt; 'handle_faq'</code></pre></div>
+            <p class="explain"><b>What this does:</b> each block is one node &mdash; you literally read the state go <b>IN</b>, the partial come <b>OUT</b>, and the <b>MERGE</b> result handed to the next edge.</p>
+          </div>
+          <div class="col">
+            <div class="code"><pre><code><span class="tok-com">EDGE: handle_faq  ──&gt;  finalize</span>
+  OUT   partial = {status='done',
+                   steps=[...,'finalize']}
+
+PATH TAKEN:
+  START -&gt; ingest -&gt; analyze
+        -&gt; handle_faq -&gt; finalize -&gt; END
+
+FINAL STATE:
+  category = 'faq'
+  status   = 'done'
+  steps    = ['ingest','analyze',
+              'handle_faq','finalize']</code></pre></div>
+            <p class="explain"><b>What this does:</b> the <span class="mono">steps</span> list <b>accumulates</b> every node that ran &mdash; proof that state carried data the whole way through and merged at each hop.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10a) EXAMPLE 3 INTRO + DIAGRAM -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Example 3 &middot; teaches Persistence &amp; Threads</p>
+        <h2>memory_demo.py &mdash; Memory that remembers</h2>
+        <div class="cols">
+          <div class="col">
+            <p>A deterministic "memory bot" (no LLM, no API key). One node answers, but a <b>checkpointer</b> saves the state after every run &mdash; keyed by <b>thread_id</b>.</p>
+            <ul class="bullets">
+              <li><b>Same thread_id</b> &rarr; the saved state is <b>loaded</b> and memory keeps growing.</li>
+              <li><b>Different thread_id</b> &rarr; a fresh, separate, empty memory.</li>
+            </ul>
+            <div class="callout">
+              <span class="callout-label">Key idea</span>
+              The <span class="mono">thread_id</span> is the key your conversation is saved under. Reuse it to <b>resume</b>; change it to <b>start over</b>.
+            </div>
+          </div>
+          <div class="col">
+            <div class="svg-wrap">
+              <svg viewBox="0 0 380 280" role="img" aria-label="Same thread_id resumes saved state; a different one starts fresh">
+                <defs>
+                  <marker id="ah7" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                    <path d="M0,0 L8,3 L0,6 Z" fill="#8a8a90"/>
+                  </marker>
+                </defs>
+                <rect x="20" y="14" width="150" height="40" rx="10" fill="#e7f6f1" stroke="#10a37f" stroke-width="1.5"/>
+                <text x="95" y="39" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0c7d61">thread "alice"</text>
+                <rect x="20" y="92" width="150" height="40" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+                <text x="95" y="117" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a1a1a">thread "alice"</text>
+                <rect x="210" y="52" width="150" height="64" rx="10" fill="#fff" stroke="#10a37f" stroke-width="1.5"/>
+                <text x="285" y="78" text-anchor="middle" font-size="12" fill="#8a8a90">checkpointer</text>
+                <text x="285" y="98" text-anchor="middle" font-size="12" font-family="monospace" fill="#0c7d61">alice: [t1,t2,t3]</text>
+                <path d="M170,34 L206,68" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah7)"/>
+                <path d="M170,112 L206,100" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah7)"/>
+                <text x="150" y="64" font-size="10" fill="#0c7d61">save</text>
+                <text x="150" y="135" font-size="10" fill="#0c7d61">resume + grow</text>
+                <rect x="20" y="200" width="150" height="40" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+                <text x="95" y="225" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a1a1a">thread "bob"</text>
+                <rect x="210" y="196" width="150" height="48" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+                <text x="285" y="216" text-anchor="middle" font-size="12" fill="#8a8a90">fresh memory</text>
+                <text x="285" y="234" text-anchor="middle" font-size="12" font-family="monospace" fill="#1a1a1a">bob: []</text>
+                <path d="M170,220 L206,220" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah7)"/>
+                <text x="150" y="190" font-size="10" fill="#8a8a90">different id</text>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10b) EXAMPLE 3 CODE + REDUCER -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Example 3 &middot; the code</p>
+        <h2>The checkpointer and the thread_id</h2>
+        <div class="cols">
+          <div class="col">
+            <div class="code"><pre><code><span class="tok-kw">from</span> langgraph.checkpoint.memory <span class="tok-kw">import</span> <span class="tok-lg">InMemorySaver</span>
+
+app = builder.<span class="tok-fn">compile</span>(
+    checkpointer=<span class="tok-lg">InMemorySaver</span>())
+
+config = {<span class="tok-str">"configurable"</span>: {<span class="tok-str">"thread_id"</span>: <span class="tok-str">"alice"</span>}}
+app.<span class="tok-lg">invoke</span>({<span class="tok-str">"user_message"</span>: msg}, config=config)</code></pre></div>
+            <p class="explain"><b>What this does:</b> the checkpointer persists state after each invoke; <span class="mono">thread_id</span> is the key it saves under. Same id loads that saved state before the node runs.</p>
+          </div>
+          <div class="col">
+            <div class="code"><pre><code><span class="tok-kw">import</span> operator
+<span class="tok-kw">from</span> typing <span class="tok-kw">import</span> Annotated
+
+<span class="tok-kw">class</span> <span class="tok-fn">MemState</span>(TypedDict):
+    user_message: str
+    history: Annotated[list, operator.add]
+    turn: Annotated[<span class="tok-kw">int</span>, operator.add]</code></pre></div>
+            <p class="explain"><b>What this does:</b> the <b>reducer</b> <span class="mono">Annotated[list, operator.add]</span> makes <span class="mono">history</span> <b>append</b> on merge &mdash; the node returns just the new turn and LangGraph grows the list automatically.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10c) EXAMPLE 3 BEFORE / AFTER -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Example 3 &middot; memory grows</p>
+        <h2>Before &amp; after, across turns</h2>
+        <div class="cols">
+          <div class="col">
+            <div class="code"><pre><code><span class="tok-com"># same thread_id "alice" — memory grows</span>
+[alice] BEFORE -&gt; remembered 0 turn(s)
+[alice] turn counter now: 1
+[alice] BEFORE -&gt; remembered 1 turn(s)
+[alice] turn counter now: 2
+[alice] BEFORE -&gt; remembered 2 turn(s)
+[alice] turn counter now: 3
+
+<span class="tok-com"># different thread_id "bob" — fresh</span>
+[bob]   BEFORE -&gt; remembered 0 turn(s)
+[bob]   turn counter now: 1</code></pre></div>
+            <p class="explain"><b>What this does:</b> alice's memory grows 1 &rarr; 2 &rarr; 3 on the same thread, while bob starts empty on his own thread.</p>
+          </div>
+          <div class="col">
+            <div class="code"><pre><code><span class="tok-com"># back to "alice" — memory RESUMES</span>
+[alice] BEFORE -&gt; remembered 3 turn(s)
+[alice] reply : This is turn 4. I remember you
+        previously said: [...]
+[alice] turn counter now: 4
+
+<span class="tok-com"># two independent saved memories</span>
+alice : 4 turns
+bob   : 1 turn</code></pre></div>
+            <p class="explain"><b>What this does:</b> switching back to <span class="mono">"alice"</span> resumes at turn 4 &mdash; proof the checkpointer kept her state keyed by thread_id, separate from bob's.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 11a) STUDIO INTRO -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">See it live</p>
+        <h2>LangGraph Studio</h2>
+        <div class="cols">
+          <div class="col">
+            <p>The local dev server and visual UI for LangGraph. It discovers your compiled graph and renders it so you can watch it execute node-by-node &mdash; <b>no API key needed</b> for the demo graph.</p>
+            <div class="code"><pre><code><span class="tok-com"># launch the local dev server</span>
+$ cd studio &amp;&amp; ../.venv/bin/langgraph dev</code></pre></div>
+            <p class="explain"><b>What this does:</b> starts the dev server, which reads <span class="mono">langgraph.json</span> and opens the visual graph UI. (Already running at <span class="mono">http://127.0.0.1:2024</span>.)</p>
+            <div class="code"><pre><code><span class="tok-com"># langgraph.json</span>
+{
+  <span class="tok-str">"dependencies"</span>: [<span class="tok-str">"."</span>],
+  <span class="tok-str">"graphs"</span>: {
+    <span class="tok-str">"agent"</span>: <span class="tok-str">"./agent.py:graph"</span>
+  },
+  <span class="tok-str">"env"</span>: <span class="tok-str">".env"</span>
+}</code></pre></div>
+            <p class="explain"><b>What this does:</b> points the dev server at the module-level compiled graph named <span class="mono">graph</span> in <span class="mono">agent.py</span>.</p>
+          </div>
+          <div class="col">
+            <ul class="bullets">
+              <li><b>Graph topology</b> drawn as a diagram you can read at a glance.</li>
+              <li><b>Node-by-node run</b> with execution highlighting so you follow the path through the branch.</li>
+              <li><b>State inspector</b> on the right: fields fill in as each node runs.</li>
+              <li><b>Editable input</b> panel to change the message and re-run.</li>
+              <li><b>Threads / time-travel</b> persistence the dev server provides automatically.</li>
+            </ul>
+            <div class="callout warn">
+              <span class="callout-label">Heads up</span>
+              The <b>Chat tab is greyed out</b> because this graph's state uses plain <b>string</b> fields. Drive it from the <b>Input panel</b> instead, and read the <span class="mono">finalize</span> node's <span class="mono">final</span> field for the answer.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 11b) STUDIO TOPOLOGY -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Studio &middot; the graph it renders</p>
+        <h2>classify &rarr; branch &rarr; finalize</h2>
+        <div class="svg-wrap">
+          <svg viewBox="0 0 980 300" role="img" aria-label="studio agent topology with a four-way router">
+            <defs>
+              <marker id="ah8" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L8,3 L0,6 Z" fill="#8a8a90"/>
+              </marker>
+            </defs>
+            <rect x="20" y="128" width="96" height="46" rx="23" fill="#10a37f"/>
+            <text x="68" y="156" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">START</text>
+            <rect x="150" y="124" width="130" height="54" rx="10" fill="#e7f6f1" stroke="#10a37f" stroke-width="1.5"/>
+            <text x="215" y="148" text-anchor="middle" font-size="13" font-weight="700" fill="#0c7d61">classify</text>
+            <text x="215" y="166" text-anchor="middle" font-size="10" fill="#0c7d61">router</text>
+            <rect x="340" y="14" width="150" height="44" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+            <text x="415" y="41" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a1a">greeting</text>
+            <rect x="340" y="80" width="150" height="44" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+            <text x="415" y="107" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a1a">farewell</text>
+            <rect x="340" y="146" width="150" height="44" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+            <text x="415" y="173" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a1a">complaint</text>
+            <rect x="340" y="212" width="150" height="44" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+            <text x="415" y="239" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a1a">question</text>
+            <rect x="560" y="124" width="120" height="48" rx="10" fill="#fff" stroke="#d9d9da" stroke-width="1.5"/>
+            <text x="620" y="153" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a1a">finalize</text>
+            <rect x="730" y="125" width="100" height="46" rx="23" fill="#0d0d0d"/>
+            <text x="780" y="153" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">END</text>
+            <line x1="116" y1="151" x2="146" y2="151" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah8)"/>
+            <path d="M280,140 L336,40" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah8)"/>
+            <path d="M280,146 L336,104" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah8)"/>
+            <path d="M280,156 L336,166" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah8)"/>
+            <path d="M280,162 L336,232" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah8)"/>
+            <path d="M490,36 L556,138" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah8)"/>
+            <path d="M490,102 L556,145" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah8)"/>
+            <path d="M490,168 L556,152" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah8)"/>
+            <path d="M490,234 L556,160" stroke="#8a8a90" stroke-width="2" fill="none" marker-end="url(#ah8)"/>
+            <line x1="680" y1="148" x2="726" y2="148" stroke="#8a8a90" stroke-width="2" marker-end="url(#ah8)"/>
+          </svg>
+        </div>
+        <p class="muted" style="font-size:16px;">Same shape as Example 1, one branch wider: <span class="mono">classify</span> routes to one of four handlers, all converging on <span class="mono">finalize</span> &rarr; END.</p>
+      </div>
+    </section>
+
+    <!-- 11c) STUDIO = THE SAME TRANSFER, VISUALLY -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Studio &middot; how information flows</p>
+        <h2>The inspector IS the IN/OUT/MERGE</h2>
+        <div class="cols">
+          <div class="col">
+            <p>What you watched scroll past in Example 2's console is exactly what Studio shows you <b>visually</b>, node-by-node, as the run progresses:</p>
+            <ul class="bullets">
+              <li>The highlighted node is the one receiving state <b>IN</b>.</li>
+              <li>The state inspector updating is the partial coming <b>OUT</b> and being <b>MERGED</b> back in.</li>
+              <li>The lit-up edge is the transfer to the next node.</li>
+            </ul>
+          </div>
+          <div class="col">
+            <div class="callout">
+              <span class="callout-label">Maps to Example 3</span>
+              Studio's <b>Threads</b> are <span class="mono">thread_id</span>s, and <b>time-travel</b> is the checkpointer's saved snapshots &mdash; the same persistence from <span class="mono">memory_demo.py</span>, made clickable.
+            </div>
+            <div class="code"><pre><code><span class="tok-com"># classify emits a partial...</span>
+classify  ──&gt;  {intent: <span class="tok-str">"complaint"</span>,
+               sentiment: <span class="tok-str">"negative"</span>}
+<span class="tok-com"># ...finalize reads merged state</span>
+finalize  ──&gt;  {final: <span class="tok-str">"[intent=complaint | ...]"</span>}</code></pre></div>
+            <p class="explain"><b>What this does:</b> read the <span class="mono">finalize</span> node's <span class="mono">final</span> field in the inspector &mdash; it's the converged result after every merge.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 12) RECAP -->
+    <section class="slide">
+      <div class="slide-inner">
+        <p class="kicker">Recap</p>
+        <h2>Three blocks, three examples</h2>
+        <div class="grid3">
+          <div class="card"><h3>State</h3><p>A shared TypedDict that flows through every node.</p></div>
+          <div class="card"><h3>Nodes</h3><p>Functions that read state, return a partial update.</p></div>
+          <div class="card"><h3>Edges</h3><p>Plain or conditional connections that pick what runs next.</p></div>
+        </div>
+        <ul class="bullets">
+          <li><b>simple_graph.py</b> &rarr; <span class="em">conditional routing</span> &mdash; a router branches to the right handler.</li>
+          <li><b>state_flow_demo.py</b> &rarr; <span class="em">how state transfers</span> &mdash; watch IN &rarr; OUT &rarr; MERGE move data between nodes.</li>
+          <li><b>memory_demo.py</b> &rarr; <span class="em">persistence &amp; threads</span> &mdash; a checkpointer + thread_id remember across turns.</li>
+          <li><b>LangGraph Studio</b> &rarr; <span class="em">see it live</span> &mdash; the same transfer and threads, made visual.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 13) CLOSING -->
+    <section class="slide center">
+      <div class="slide-inner">
+        <p class="kicker">That's the core</p>
+        <h1>Questions?</h1>
+        <p class="lead">State &middot; Nodes &middot; Edges &mdash; everything else in LangGraph builds on these three.</p>
+        <div><span class="pill end">END</span></div>
+      </div>
+    </section>
+
+  </main>
+
+<script>
+(function () {
+  "use strict";
+
+  var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"));
+  var total = slides.length;
+  var bar = document.querySelector(".progress");
+  var curEl = document.getElementById("cur");
+  var totEl = document.getElementById("tot");
+  var index = 0;
+
+  function clamp(n) { return Math.max(0, Math.min(total - 1, n)); }
+
+  function render() {
+    slides.forEach(function (s, i) {
+      if (i === index) {
+        s.classList.add("active");
+        s.scrollTop = 0;
+      } else {
+        s.classList.remove("active");
+      }
+    });
+    if (curEl) curEl.textContent = index + 1;
+    if (bar) bar.style.width = total > 1 ? (index / (total - 1)) * 100 + "%" : "100%";
+
+    var hash = "#" + (index + 1);
+    if (location.hash !== hash) history.replaceState(null, "", hash);
+  }
+
+  function go(n) {
+    var next = clamp(n);
+    if (next === index) return;
+    index = next;
+    render();
+  }
+  function next() { go(index + 1); }
+  function prev() { go(index - 1); }
+
+  document.addEventListener("keydown", function (e) {
+    switch (e.key) {
+      case "ArrowRight":
+      case "PageDown":
+      case " ":
+        e.preventDefault(); next(); break;
+      case "ArrowLeft":
+      case "PageUp":
+        e.preventDefault(); prev(); break;
+      case "Home":
+        e.preventDefault(); go(0); break;
+      case "End":
+        e.preventDefault(); go(total - 1); break;
+      case "f":
+      case "F":
+        e.preventDefault(); toggleFullscreen(); break;
+    }
+  });
+
+  document.addEventListener("click", function (e) {
+    if (e.target.closest("a, button, input, textarea, select, .code")) return;
+    var x = e.clientX / window.innerWidth;
+    if (x > 0.66) next();
+    else if (x < 0.34) prev();
+  });
+
+  function toggleFullscreen() {
+    var el = document.documentElement;
+    if (!document.fullscreenElement) {
+      (el.requestFullscreen || el.webkitRequestFullscreen || function () {}).call(el);
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen || function () {}).call(document);
+    }
+  }
+
+  if (totEl) totEl.textContent = total;
+  var fromHash = parseInt((location.hash || "").replace("#", ""), 10);
+  if (!isNaN(fromHash)) index = clamp(fromHash - 1);
+  render();
+
+  window.addEventListener("hashchange", function () {
+    var h = parseInt((location.hash || "").replace("#", ""), 10);
+    if (!isNaN(h)) go(h - 1);
+  });
+})();
+</script>
+</body>
+</html>
