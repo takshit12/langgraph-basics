@@ -32,6 +32,10 @@ below use **absolute-style relative paths from the repo root** — run them afte
 `cd`-ed into `langgraph-basics`. If a `.venv/bin/...` command feels long, you can
 [activate the venv](#troubleshooting) once and drop the prefix.
 
+> **On Windows?** Steps 1–8 are written for macOS / Linux. Jump to
+> [Windows setup](#windows-setup-powershell) for the same walkthrough with Windows
+> paths and commands.
+
 ### 1. Prerequisites
 
 You need **Python 3.10 or newer** (LangGraph 1.x requires 3.10+; this repo was built
@@ -200,6 +204,179 @@ turn shows up as a trace). Both are optional.
 - **"LangSmith API key missing" banner** in Studio — **safe to ignore.** Tracing is
   optional; set `LANGSMITH_API_KEY` in `studio/.env` only if you want it.
 
+## Windows setup (PowerShell)
+
+Same walkthrough as above, for Windows 10/11. Use **PowerShell** (or Windows Terminal);
+the commands are shown for PowerShell and mostly work in Command Prompt too. The only
+real differences from macOS: the interpreter lives at `.venv\Scripts\python.exe` instead
+of `.venv/bin/python`, and you launch Python via the `py` launcher instead of `python3.11`.
+
+### W1. Prerequisites
+
+Install **Python 3.11** and **git**. Pick one route:
+
+**Route A — winget (built into Windows 10/11):**
+
+```powershell
+winget install --id Python.Python.3.11 -e
+winget install --id Git.Git -e
+```
+
+**Route B — installers:** download Python 3.11 from <https://www.python.org/downloads/windows/>
+and git from <https://git-scm.com/download/win>. In the Python installer **tick
+"Add python.exe to PATH"** (and keep the "py launcher" option enabled) before clicking
+Install.
+
+Close and reopen PowerShell after installing so the new PATH is picked up, then check:
+
+```powershell
+py -3.11 --version    # e.g. Python 3.11.x  (preferred)
+py --version          # must be >= 3.10
+git --version
+```
+
+If `py` is not recognised, try `python --version`. If that opens the Microsoft Store
+instead, disable the store alias: Settings → Apps → Advanced app settings → App execution
+aliases → turn off both **python.exe** and **python3.exe**, then reopen PowerShell.
+
+**Optional but recommended:** [`uv`](https://docs.astral.sh/uv/) (fast venv + package
+manager). Install with either:
+
+```powershell
+winget install --id astral-sh.uv -e
+# or
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+### W2. Get the code
+
+```powershell
+git clone <repo-url>
+cd langgraph-basics
+```
+
+All remaining commands assume you are inside the `langgraph-basics` folder.
+
+### W3. Create the virtual environment and install dependencies
+
+Pick **one** of the two options.
+
+**Option A — uv (fast):**
+
+```powershell
+uv venv --python 3.11 .venv
+uv pip install -r requirements.txt
+```
+
+**Option B — plain venv (no extra tools):**
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+Either way you get a `.venv\` folder with the interpreter at `.venv\Scripts\python.exe`
+and the LangGraph CLI at `.venv\Scripts\langgraph.exe`. (Windows venvs use `Scripts\`
+where macOS/Linux use `bin/`.)
+
+**Activating the venv (optional, saves typing):**
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Once activated, `python`, `pip`, and `langgraph` work without the `.venv\Scripts\`
+prefix; run `deactivate` to exit. If PowerShell refuses with *"running scripts is
+disabled on this system"*, allow local scripts once for your user and retry:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+In **Command Prompt** the activate script is `.venv\Scripts\activate.bat` instead.
+
+### W4. (Optional) Add an API key
+
+Identical to [step 4](#4-optional-add-an-api-key-for-the-llm-paths) above; only the copy
+command differs:
+
+```powershell
+Copy-Item .env.example .env      # PowerShell
+copy .env.example .env           # Command Prompt
+```
+
+Then open `.env` in any editor (`notepad .env` works) and set `OPENROUTER_API_KEY`.
+Every core example still runs with **no key**.
+
+### W5. Verify the install
+
+```powershell
+.venv\Scripts\python -c "from langgraph.graph import StateGraph, START, END; from langgraph.checkpoint.memory import InMemorySaver; print('ok')"
+```
+
+If it prints `ok`, you're ready.
+
+### W6. Run the examples
+
+Run each from the repo root (drop the `.venv\Scripts\` prefix if you activated the venv).
+See [step 6](#6-run-the-examples) for what each one shows.
+
+```powershell
+.venv\Scripts\python simple_graph.py
+.venv\Scripts\python state_flow_demo.py
+.venv\Scripts\python memory_demo.py
+```
+
+The console demos are interactive; the same `:step`, `:auto`, `:stream`, `:user`, `:mem`,
+and `:q` controls apply. To run the **headless auto-demo** (the macOS `< /dev/null`
+trick), redirect from `NUL` instead:
+
+```powershell
+.venv\Scripts\python state_flow_demo.py < NUL
+.venv\Scripts\python memory_demo.py < NUL
+```
+
+Colours print correctly in Windows Terminal and modern PowerShell. If you see stray
+`[36m`-style codes in an old console, set `$env:NO_COLOR = "1"` first.
+
+### W7. Run LangGraph Studio
+
+```powershell
+cd studio
+..\.venv\Scripts\langgraph dev
+```
+
+The dev server starts on <http://127.0.0.1:2024> and the Studio UI opens in your default
+browser, exactly as described in [step 7](#7-run-langgraph-studio-the-local-visual-builder).
+If Windows Defender Firewall asks whether to allow Python to accept connections, choose
+**Allow** (it only listens on localhost). Press `Ctrl+C` to stop the server and `cd ..` to
+return to the repo root. Optional keys go in `studio\.env` (`Copy-Item .env.example .env`
+inside `studio\`).
+
+### W8. Windows troubleshooting
+
+- **`py` / `python` not recognised.** Reopen PowerShell after installing; if it persists,
+  re-run the installer and tick "Add python.exe to PATH", or use the full path shown by
+  `where.exe python`. Disable the Store alias as described in W1.
+- **`Activate.ps1 cannot be loaded because running scripts is disabled`.** Run
+  `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or skip activation and use
+  the `.venv\Scripts\python` prefix.
+- **`langgraph` is not recognised.** The CLI lives inside the venv: use
+  `.venv\Scripts\langgraph` (or `..\.venv\Scripts\langgraph` from `studio\`) or activate
+  the venv first.
+- **Path too long / install errors mentioning `MAX_PATH`.** Clone into a short path such
+  as `C:\dev\langgraph-basics`, or enable long paths: run
+  `New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force`
+  in an **administrator** PowerShell and reboot.
+- **`UnicodeEncodeError` when a script prints arrows or emoji.** Run
+  `$env:PYTHONUTF8 = "1"` (or `chcp 65001`) before the command, or use Windows Terminal,
+  which is UTF-8 by default.
+- **Port 2024 already in use** when starting Studio: another `langgraph dev` is still
+  running. Find and stop it with `Get-Process -Name langgraph,python | Stop-Process`, or
+  start on a different port with `..\.venv\Scripts\langgraph dev --port 2025`.
+- Everything else (Python version, LLM/network errors, the LangSmith banner) is the same
+  as the [macOS troubleshooting](#8-troubleshooting) list.
+
 ## The examples
 
 | File | Run | Teaches |
@@ -211,7 +388,9 @@ turn shows up as a trace). Both are optional.
 | `langsmith-simple.py` | `.venv/bin/python langsmith-simple.py` | **LangSmith tracing** with one `@traceable` decorator and `wrap_openai`. A two-step pipeline (`gpt-4o-mini` → `claude-3-haiku` via one OpenRouter key) recorded as a trace tree. Needs `OPENROUTER_API_KEY`; uploads if `LANGSMITH_API_KEY` is set. |
 | `agent-eval.py` | `.venv/bin/python agent-eval.py` | **A tool-calling (ReAct) agent, then evaluations.** `add`/`multiply` tools, `ToolNode`, the `agent → tools → agent` loop; then a LangSmith dataset graded by exact-match, LLM-as-a-judge, and a substring check. Exact-match scores 0 on correct sentence answers — that's the lesson. Needs `OPENROUTER_API_KEY`; evals need `LANGSMITH_API_KEY`. |
 
-> Both console demos also run headless (`... < /dev/null`) as a scripted auto-demo.
+> Both console demos also run headless (`... < /dev/null`, or `... < NUL` on Windows) as
+> a scripted auto-demo. On Windows replace `.venv/bin/python` with `.venv\Scripts\python`
+> throughout this table.
 
 ## Breakout: build your own agent
 
@@ -239,7 +418,8 @@ Watch a graph execute node-by-node in your browser, inspect state as it fills in
 use threads / time-travel.
 
 ```bash
-cd studio && ../.venv/bin/langgraph dev
+cd studio && ../.venv/bin/langgraph dev          # macOS / Linux
+cd studio; ..\.venv\Scripts\langgraph dev       # Windows PowerShell
 ```
 
 - API: http://127.0.0.1:2024 · Studio UI opens automatically in your browser
