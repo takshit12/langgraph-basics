@@ -171,13 +171,15 @@ cd studio && ../.venv/bin/langgraph dev
 ```
 
 > **What you'll see:** the dev server starts and the Studio UI opens in your browser,
-> wired to the API at <http://127.0.0.1:2024>. The demo graph is an **interactive
-> storyteller** (`START → route → {begin | continue} → END`) built on `MessagesState`, so
-> the **Chat tab works**: type "Start a fantasy adventure", then answer the narrator's
-> numbered choices and watch the `messages` list grow in the state inspector. Each
-> conversation is a thread; a new thread starts a new story. Runs with **no API key**
-> (canned scenes). `studio/agent.py` exposes the compiled `graph`; `studio/langgraph.json`
-> is the manifest.
+> wired to the API at <http://127.0.0.1:2024>. The demo graph is a **multi-agent text
+> adventure**: a Game Master (supervisor) reads each move you type and hands the turn to
+> one of three specialist agents (`START → game_master → {narrator | combat | npc} → END`).
+> Built on `MessagesState`, so the **Chat tab works**: type "Start a fantasy adventure",
+> then "I attack the wolf" and "I ask the old woman about the tower", and watch a different
+> box light up each turn while `scene_type` and `inventory` change in the state inspector.
+> Each conversation is a thread; a new thread starts a new adventure. Runs with **no API
+> key** (canned scenes, keyword routing). `studio/agent.py` exposes the compiled `graph`;
+> `studio/langgraph.json` is the manifest.
 
 Optional: create `studio/.env` (copy from `studio/.env.example`) to set
 `OPENROUTER_API_KEY` (real AI-written scenes) and/or `LANGSMITH_API_KEY` (every Studio
@@ -205,7 +207,7 @@ turn shows up as a trace). Both are optional.
 | `simple_graph.py` | `.venv/bin/python simple_graph.py` | The fundamentals: state, nodes, **conditional edges**. Greeting branch = plain node; search branch = live LLM node (OpenRouter). |
 | `state_flow_demo.py` | `.venv/bin/python state_flow_demo.py` | **How state transfers between nodes.** Interactive: type a message, step the graph one node at a time, and watch every `IN → OUT(partial) → MERGE → EDGE → ROUTER` hand-off printed live. |
 | `memory_demo.py` | `.venv/bin/python memory_demo.py` | **Memory / persistence.** A checkpointer (`InMemorySaver`) + `thread_id` make the graph *remember* across turns. Same `thread_id` resumes saved state; a different one starts fresh. With a key, the LLM's replies use the remembered history. |
-| `studio/agent.py` | `cd studio && ../.venv/bin/langgraph dev` | **Visual debugging in LangGraph Studio.** An interactive storyteller on `MessagesState`: a conditional edge from `START`, the Chat tab, the `messages` list growing per turn, threads and time-travel. No API key required. |
+| `studio/agent.py` | `cd studio && ../.venv/bin/langgraph dev` | **Multi-agent, made visual in LangGraph Studio.** A Game Master supervisor routes each move to a Narrator, Combat Master, or NPC agent via a conditional edge; the agents collaborate through shared state (`inventory` with an `operator.add` reducer). Chat tab, threads, time-travel. No API key required. |
 | `langsmith-simple.py` | `.venv/bin/python langsmith-simple.py` | **LangSmith tracing** with one `@traceable` decorator and `wrap_openai`. A two-step pipeline (`gpt-4o-mini` → `claude-3-haiku` via one OpenRouter key) recorded as a trace tree. Needs `OPENROUTER_API_KEY`; uploads if `LANGSMITH_API_KEY` is set. |
 | `agent-eval.py` | `.venv/bin/python agent-eval.py` | **A tool-calling (ReAct) agent, then evaluations.** `add`/`multiply` tools, `ToolNode`, the `agent → tools → agent` loop; then a LangSmith dataset graded by exact-match, LLM-as-a-judge, and a substring check. Exact-match scores 0 on correct sentence answers — that's the lesson. Needs `OPENROUTER_API_KEY`; evals need `LANGSMITH_API_KEY`. |
 
@@ -242,10 +244,15 @@ cd studio && ../.venv/bin/langgraph dev
 
 - API: http://127.0.0.1:2024 · Studio UI opens automatically in your browser
 - `studio/agent.py` exposes a compiled `graph`; `studio/langgraph.json` is the manifest.
-- The storyteller runs with **no API key** (canned scenes); set `OPENROUTER_API_KEY` in
-  `studio/.env` for AI-written scenes, and `LANGSMITH_API_KEY` to trace every turn.
-- The Chat tab works because the state is `MessagesState` (a `messages` key with the
-  `add_messages` reducer). Each node returns one message; the reducer appends it.
+- Four agents: `game_master` (supervisor, writes `scene_type` and never speaks),
+  `narrator`, `combat`, and `npc` (specialists, each with its own role prompt). The
+  supervisor's decision is read by a conditional edge — the hand-off is plain routing.
+- Runs with **no API key** (canned scenes, keyword routing); set `OPENROUTER_API_KEY` in
+  `studio/.env` so all four agents are real model calls, and `LANGSMITH_API_KEY` to trace
+  every turn.
+- The Chat tab works because the state extends `MessagesState` (a `messages` key with the
+  `add_messages` reducer). `inventory` uses `operator.add`, so loot from one agent is
+  visible in the next agent's prompt.
 
 ## API surface used here
 
