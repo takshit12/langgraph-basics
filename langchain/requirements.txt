@@ -1,0 +1,41 @@
+# LangChain 1.x teaching environment
+langchain>=1.0,<2.0
+langchain-openai>=1.0,<2.0
+
+# FAISS vector store + plain-text document loading.
+# NOTE (resolved deprecation question): `langchain-community` prints a "sunset"
+# DeprecationWarning at import, but it remains the working, canonical path for
+# FAISS + TextLoader in LangChain 1.x. There is no real replacement yet:
+#   - `langchain-classic` merely RE-EXPORTS these from `langchain-community`, and
+#     its own deprecation warning tells you to import from `langchain-community`.
+#   - `langchain-faiss` (0.1.1) is an unmaintained stub: two same-day releases in
+#     Oct 2024, no summary/deps/homepage metadata -- unfit for a teaching repo.
+# So we keep `langchain-community` and suppress the sunset warning in the two
+# scripts that touch FAISS (build_rag_index.py, rag_demo.py) with a documented
+# one-line filterwarnings call, so it doesn't look like an oversight.
+langchain-community>=0.4,<0.5
+
+langchain-huggingface>=1.0,<2.0
+langchain-text-splitters>=1.0,<2.0
+sentence-transformers>=3.0
+faiss-cpu>=1.8
+python-dotenv>=1.0
+# Not listed explicitly but pulled in transitively (both are genuine
+# dependencies, not accidents): `openai` via langchain-openai, and `langgraph`
+# via langchain (create_agent compiles to a LangGraph graph internally).
+
+# ---- Optional web-UI extras (rag_app.py = Streamlit, rag_chat.py = Chainlit) ----
+# Kept in this single requirements file so one `pip install -r requirements.txt`
+# sets up everything, including the two optional web UIs. The terminal examples
+# never import these -- skip them if you only want the command-line demos.
+streamlit>=1.30
+chainlit>=1.0
+
+# ---- Advanced RAG demo (advanced_rag_demo.py) ----
+# In LangChain 1.x the higher-level retrievers/compressors moved into
+# `langchain-classic` (EnsembleRetriever, ContextualCompressionRetriever,
+# MultiQueryRetriever, CrossEncoderReranker, EmbeddingsFilter). `rank-bm25`
+# backs BM25Retriever for hybrid dense+sparse search. The cross-encoder reranker
+# model (~80MB) downloads on first use, like the embedding model.
+langchain-classic>=1.0,<2.0
+rank-bm25>=0.2

@@ -33,3 +33,6 @@ simple_graph2.py
 # retired examples (dropped from the lesson)
 storygen.py
 supporticket.py
+
+# local FAISS indexes built by langchain/build_rag_index.py
+langchain/faiss_index*/
