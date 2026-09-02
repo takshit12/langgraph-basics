@@ -1,28 +1,38 @@
-# LangGraph Studio demo graph — a MULTI-AGENT text adventure.
+# LangGraph Studio demo graph — a MULTI-AGENT CUSTOMER SUPPORT DESK.
 #
-# Four agents share one table (the state). One is the boss, three are specialists:
+# You paste a customer message. A team of agents handles it, and EVERY agent posts its
+# own named message, so the teamwork is visible in Studio's Chat tab:
 #
-#   game_master  SUPERVISOR  reads the player's move, decides WHO acts next  -> writes scene_type
-#   narrator     specialist  explores: describes the world, moves the plot   -> writes a message
-#   combat       specialist  resolves fights and hands out loot              -> message + inventory
-#   npc          specialist  voices the characters the player talks to      -> message + inventory
+#   triage     SUPERVISOR   classifies the ticket, sets priority, assigns a ticket ID,
+#                           and hands off to ONE specialist            -> category, priority, ticket_id
+#   billing    specialist   drafts the customer reply (money questions)  -> draft
+#   tech       specialist   drafts the customer reply (bugs / errors)    -> draft
+#   account    specialist   drafts the customer reply (login / profile)  -> draft
+#   reviewer   POLICY GATE  checks the draft against the rulebook and either
+#                           APPROVES it or REJECTS it with notes        -> verdict, notes
+#   closer     wrap-up      sends the approved reply and logs the ticket,
+#                           or escalates to a human after MAX_ROUNDS     -> log
 #
-#   START -> game_master -> (route_by_scene) -> { narrator | combat | npc } -> END
+#   START -> triage -> { billing | tech | account } -> reviewer -> approved? -> closer -> END
+#                             ^                           |
+#                             └──── rejected (rounds < MAX_ROUNDS) ─────┘
 #
-# The teaching points, in the same vocabulary as the rest of the session:
-#   - an AGENT is just a node with its own role (system prompt)   -> (state) -> partial dict
-#   - the SUPERVISOR is also an agent: an LLM deciding who goes next; it writes its
-#     decision into state (scene_type) and never talks to the player
-#   - the HAND-OFF is a conditional edge that reads that decision
-#   - the agents COLLABORATE through the shared state: `inventory` has a reducer
-#     (operator.add), so loot the combat agent adds is visible to the npc agent's prompt
-#   - built on MessagesState so LangGraph Studio's Chat tab works; threads keep the story
+# Teaching points, in the same vocabulary as the rest of the session:
+#   - an AGENT is a node with its own role (system prompt); same (state) -> partial dict shape
+#   - the SUPERVISOR (triage) writes its decision into state; a conditional edge does the hand-off
+#   - the REVIEW LOOP is a conditional edge that points BACKWARDS; MAX_ROUNDS is the safety cap
+#   - agents collaborate through SHARED STATE: the reviewer's `notes` become the specialist's
+#     instructions on the next round; `log` uses the operator.add reducer
+#   - the reviewer is part CODE (hard rules, deterministic) and part LLM (judgement) -
+#     the same split as exact-match vs LLM-as-a-judge in agent-eval.py
+#   - built on MessagesState so Studio's Chat tab works; each thread is one customer
 #
 # `langgraph dev` discovers the module-level compiled `graph` via langgraph.json.
-# No API key -> canned scenes (routing still works); with OPENROUTER_API_KEY in
-# studio/.env every agent is a real model call.
+# No API key -> keyword triage, canned drafts, rule-based review (the loop still runs).
+# With OPENROUTER_API_KEY in studio/.env every agent is a real model call.
 import operator
 import os
+import random
 import re
 from typing import Annotated, Literal
 
@@ -32,53 +42,73 @@ from langgraph.graph import StateGraph, START, END, MessagesState
 
 load_dotenv()
 
-
-# --- The shared table: State ----------------------------------------------------
-class GameState(MessagesState):
-    """MessagesState gives us `messages` (with the add_messages reducer, so the
-    Chat tab works). We add three more keys the agents share."""
-
-    scene_type: str                                  # game_master's decision (replaced each turn)
-    inventory: Annotated[list[str], operator.add]    # loot; reducer APPENDS (combat/npc add items)
-    turn: Annotated[int, operator.add]               # each specialist returns 1 -> counter climbs
+MAX_ROUNDS = 3          # draft + up to two revisions; after that the closer escalates to a human
+COMPANY = "Nimbus"      # a fictional note-taking app with monthly / yearly plans
 
 
-SceneType = Literal["explore", "combat", "dialogue"]
+# --- The shared table: State ---------------------------------------------------------
+class DeskState(MessagesState):
+    """MessagesState gives us `messages` (add_messages reducer -> the Chat tab works).
+    Everything else is the team's shared scratchpad."""
+
+    ticket_id: str                          # assigned by triage on the first turn, then kept
+    category: Literal["billing", "tech", "account"]   # triage's routing decision
+    priority: str                           # low | normal | high
+    draft: str                              # the specialist's current draft reply
+    rounds: int                             # how many drafts this turn (reset by triage)
+    verdict: str                            # reviewer: approved | rejected
+    notes: str                              # reviewer's reasons (fed back to the specialist)
+    log: Annotated[list[str], operator.add] # one line per closed ticket; reducer APPENDS
 
 
-# --- Each agent's role -------------------------------------------------------------
-GAME_MASTER_ROLE = (
-    "You are the Game Master of a text adventure. Read the player's latest move and "
-    "decide which specialist should handle it. Reply with EXACTLY one word:\n"
-    "  explore  - moving, looking around, travelling, searching, anything else\n"
-    "  combat   - attacking, fighting, defending, fleeing from danger\n"
-    "  dialogue - talking to, asking, greeting, or persuading a character"
+# --- Roles ------------------------------------------------------------------------------
+TRIAGE_ROLE = (
+    f"You are the Triage lead on the {COMPANY} support desk. Read the customer's message "
+    "and reply with EXACTLY two words: <category> <priority>.\n"
+    "  category: billing (charges, invoices, refunds, plans, payment) | "
+    "tech (errors, crashes, sync, things not working) | "
+    "account (login, password, email, profile, deleting the account)\n"
+    "  priority: high (angry, urgent, money lost, locked out) | normal | low"
 )
 
-NARRATOR_ROLE = (
-    "You are the Narrator of a short, fun fantasy adventure. Describe the world and move "
-    "the story forward in 4-6 vivid sentences. Always include at least one character the "
-    "player could talk to and one danger they could fight. End with 2-3 numbered choices."
+SPECIALIST_ROLE = {
+    "billing": f"You are the Billing specialist at {COMPANY}, a note-taking app with monthly and "
+               "yearly plans. Write the customer-facing reply to the message below. Be warm, "
+               "specific and brief.",
+    "tech":    f"You are the Technical Support specialist at {COMPANY}, a note-taking app for web, "
+               "iOS and Android. Write the customer-facing reply to the message below. Be warm, "
+               "specific and brief.",
+    "account": f"You are the Account specialist at {COMPANY}, a note-taking app. You handle logins, "
+               "passwords, emails and profiles. Write the customer-facing reply to the message "
+               "below. Be warm, specific and brief.",
+}
+
+# The rulebook lives with the REVIEWER. Specialists only learn it through feedback -
+# which is exactly why the review loop shows itself on the first draft.
+POLICY = (
+    "1. Every reply must quote the ticket ID (e.g. #4821).\n"
+    "2. Never guarantee a refund, credit, fix, or timeline. Say a refund request has been "
+    "opened / the issue has been logged, and that reversals typically take 5-7 business days.\n"
+    "3. Give the customer exactly ONE concrete next step or one question.\n"
+    "4. Under 90 words. At most one exclamation mark.\n"
+    "5. Never blame the customer or tell them to 'just' do something."
 )
 
-COMBAT_ROLE = (
-    "You are the Combat Master. Resolve the player's fight in 3-5 punchy, cinematic "
-    "sentences - the player should win, but at a cost or with a twist. End with 2-3 "
-    "numbered choices. Then, on the very last line, write LOOT: followed by at most two "
-    "short item names the player gained (objects only, e.g. LOOT: rusty dagger, wolf pelt), "
-    "or LOOT: none."
+REVIEWER_ROLE = (
+    f"You are the Policy Reviewer on the {COMPANY} support desk. Check the draft reply against "
+    "the rulebook. Reject ONLY for a clear breach of a numbered rule; do not invent rules. "
+    "Greetings and sign-offs never count as a 'next step'. Reply with exactly one line: "
+    "'APPROVED' or 'REJECTED: <the rules it breaks, briefly>'.\n\nRULEBOOK:\n" + POLICY
 )
 
-NPC_ROLE = (
-    "You are the voice of every non-player character. Reply IN CHARACTER as the person "
-    "the player addressed: 3-5 sentences of dialogue that reveal a hint, a rumour, or a "
-    "secret. End with 2-3 numbered choices. Then, on the very last line, write LOOT: "
-    "followed by at most one short item name if the character gives the player something "
-    "(objects only, e.g. LOOT: brass key), or LOOT: none."
+# Hard rules the reviewer checks IN CODE, so they never slip through.
+BANNED = re.compile(
+    r"\b(guarantee[ds]?|full refund|within 24 hours|immediately|right away|straight away)\b",
+    re.IGNORECASE,
 )
 
 
-# --- Shared plumbing ----------------------------------------------------------------
+# --- Shared plumbing --------------------------------------------------------------------
 def _llm():
     """An OpenRouter-backed chat model, or None when no key is set."""
     api_key = os.getenv("OPENROUTER_API_KEY")
@@ -90,168 +120,251 @@ def _llm():
         model=os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
         base_url="https://openrouter.ai/api/v1",
         api_key=api_key,
-        temperature=0.8,
+        temperature=0.4,
     )
 
 
-def _last_move(state: GameState) -> str:
-    """The player's most recent message."""
+def _customer_message(state: DeskState) -> str:
+    """The customer's most recent message."""
     for m in reversed(state["messages"]):
         if isinstance(m, HumanMessage):
             return m.content if isinstance(m.content, str) else str(m.content)
     return ""
 
 
-def _speak(role: str, state: GameState) -> str | None:
-    """Ask the model to act in a role, seeing the whole conversation AND the shared
-    inventory. Returns None when there is no key (the caller uses a canned scene)."""
-    llm = _llm()
-    if llm is None:
-        return None
-    carried = ", ".join(state.get("inventory", [])) or "nothing yet"
-    system = SystemMessage(content=f"{role}\n\nThe player currently carries: {carried}.")
-    return llm.invoke([system] + state["messages"]).content
+def _say(agent: str, text: str) -> AIMessage:
+    """Every agent posts under its own name so the teamwork is visible in Chat."""
+    return AIMessage(content=f"[{agent}] {text}", name=agent.lower())
 
 
-_LOOT_LINE = re.compile(r"^\s*LOOT:\s*(.*?)\s*$", re.IGNORECASE | re.MULTILINE)
+# --- Agent 1: Triage (supervisor) -----------------------------------------------------------
+BILLING_WORDS = {"charge", "charged", "invoice", "refund", "payment", "card", "bill", "billed",
+                 "price", "plan", "subscription", "renewed", "twice", "double"}
+TECH_WORDS = {"error", "crash", "crashes", "crashed", "bug", "broken", "sync", "syncing",
+              "slow", "freezes", "loading", "install", "update", "notes", "lost", "missing"}
+ACCOUNT_WORDS = {"password", "login", "log", "email", "username", "delete", "profile",
+                 "locked", "verify", "verification", "2fa", "signin", "sign"}
+URGENT_WORDS = {"urgent", "asap", "angry", "furious", "unacceptable", "immediately", "now",
+                "locked", "lost", "twice", "again", "third"}
 
 
-def _split_loot(text: str) -> tuple[str, list[str]]:
-    """Pull the trailing 'LOOT: a, b' line off a specialist's reply."""
-    match = _LOOT_LINE.search(text)
-    if not match:
-        return text.strip(), []
-    raw = match.group(1).strip()
-    items = [] if raw.lower() in ("", "none", "nothing") else [i.strip() for i in raw.split(",") if i.strip()]
-    return _LOOT_LINE.sub("", text).strip(), items
+def _words(text: str) -> set[str]:
+    return {w.strip("?!.,'\"()").lower() for w in text.split()}
 
 
-# --- Agent 1: the Game Master (supervisor) -------------------------------------------
-COMBAT_WORDS = {"attack", "fight", "strike", "stab", "slash", "shoot", "punch", "kill",
-                "sword", "draw", "defend", "flee", "run", "charge", "hit"}
-TALK_WORDS = {"ask", "talk", "speak", "say", "tell", "greet", "hello", "hi", "who",
-              "persuade", "bargain", "question", "call"}
+def _rules_triage(message: str) -> tuple[str, str]:
+    """Offline fallback: keyword rules, exactly like classify() in simple_graph.py."""
+    words = _words(message)
+    if words & BILLING_WORDS:
+        category = "billing"
+    elif words & ACCOUNT_WORDS:
+        category = "account"
+    elif words & TECH_WORDS:
+        category = "tech"
+    else:
+        category = "tech"
+    priority = "high" if words & URGENT_WORDS else "normal"
+    return category, priority
 
 
-def _rules_of_thumb(move: str) -> SceneType:
-    """Offline fallback for the supervisor: keyword rules, like simple_graph.py."""
-    words = {w.strip("?!.,'\"").lower() for w in move.split()}
-    if words & COMBAT_WORDS:
-        return "combat"
-    if words & TALK_WORDS:
-        return "dialogue"
-    return "explore"
-
-
-def game_master(state: GameState) -> dict:
-    """SUPERVISOR. Decides who acts this turn. Writes ONLY scene_type - no message."""
-    told_before = any(isinstance(m, AIMessage) for m in state["messages"])
-    if not told_before:
-        return {"scene_type": "explore"}          # the opening scene is always the narrator's
-
-    move = _last_move(state)
+def triage(state: DeskState) -> dict:
+    """SUPERVISOR. Classifies the ticket and decides which specialist gets it."""
+    message = _customer_message(state)
+    category, priority = _rules_triage(message)
     llm = _llm()
     if llm is not None:
-        verdict = llm.invoke([SystemMessage(content=GAME_MASTER_ROLE), HumanMessage(content=move)])
-        first_word = re.findall(r"[a-z]+", verdict.content.lower())[:1]
-        if first_word and first_word[0] in ("explore", "combat", "dialogue"):
-            return {"scene_type": first_word[0]}
-    return {"scene_type": _rules_of_thumb(move)}
+        verdict = llm.invoke([SystemMessage(content=TRIAGE_ROLE), HumanMessage(content=message)])
+        words = re.findall(r"[a-z]+", verdict.content.lower())
+        if len(words) >= 2 and words[0] in SPECIALIST_ROLE and words[1] in ("low", "normal", "high"):
+            category, priority = words[0], words[1]
+    ticket_id = state.get("ticket_id") or f"#{random.randint(4000, 4999)}"
+    who = {"billing": "Billing", "tech": "Tech", "account": "Account"}[category]
+    return {
+        "ticket_id": ticket_id,
+        "category": category,
+        "priority": priority,
+        "rounds": 0,            # a new customer message starts a fresh review cycle
+        "verdict": "",
+        "notes": "",
+        "draft": "",
+        "messages": [_say("Triage", f"Ticket {ticket_id} · category: {category} · priority: "
+                                    f"{priority} → handing to {who}.")],
+    }
 
 
-# --- The hand-off: a conditional edge that reads the supervisor's decision -----------
-def route_by_scene(state: GameState) -> Literal["narrator", "combat", "npc"]:
-    return {"explore": "narrator", "combat": "combat", "dialogue": "npc"}[
-        state.get("scene_type", "explore")
-    ]
+def route_by_category(state: DeskState) -> Literal["billing", "tech", "account"]:
+    """The hand-off: a conditional edge that reads the supervisor's decision."""
+    return state["category"]
 
 
-# --- Agents 2-4: the specialists ------------------------------------------------------
-OFFLINE_OPENING = (
-    "Dawn breaks over a muddy crossroads. To the north, a village chimney smokes; to the "
-    "east, a black tower leans against the sky. A grey wolf watches you from the treeline, "
-    "and an old woman with a walking stick hums beside a milestone. "
-    "(Set OPENROUTER_API_KEY in studio/.env for an AI-written story.)\n"
-    "1) Follow the road to the village   2) Draw your sword on the wolf   "
-    "3) Ask the old woman about the tower"
-)
-OFFLINE_EXPLORE = (
-    "You press on. The road narrows into a hollow of dripping trees where something has "
-    "scratched a warning into the bark. A tinker's cart stands abandoned, its owner "
-    "arguing with a shadow that is not his own.\n"
-    "1) Search the cart   2) Attack the shadow   3) Talk to the tinker"
-)
-OFFLINE_COMBAT = (
-    "Steel rings. The wolf lunges, you sidestep, and one clean strike ends it - but not "
-    "before its teeth tear your sleeve. Among the roots where it slept you find a rusty "
-    "dagger and a strip of dried meat.\n"
-    "1) Search the den further   2) Head for the village   3) Call out to whoever is watching\n"
-    "LOOT: rusty dagger, dried meat"
-)
-OFFLINE_NPC = (
-    "The old woman stops humming. \"The tower? Nobody who climbs it comes back the same. "
-    "But the door only opens for the ones who ask nicely.\" She presses a cold brass key "
-    "into your palm and winks.\n"
-    "1) Ask what the key opens   2) Thank her and head to the tower   3) Ask about the wolf\n"
-    "LOOT: brass key"
-)
+# --- Agents 2-4: the specialists (one node each; same shape, different role) -------------------
+OFFLINE_DRAFTS = {
+    # round 1 (fast draft: forgets the ticket ID, over-promises)  /  round 2 (fixed)
+    "billing": (
+        "Hi! So sorry about the double charge. You'll get a full refund within 24 hours, "
+        "guaranteed. Cheers!",
+        "Hi, thanks for flagging this (ticket {ticket}). I can see two charges on your last "
+        "invoice, and I've opened a refund request for the duplicate; reversals typically "
+        "take 5-7 business days. Could you confirm the last four digits of the card so I can "
+        "prioritise it?",
+    ),
+    "tech": (
+        "Hey! That sync bug is annoying, sorry. Just reinstall the app and it'll be fixed "
+        "immediately. Let me know!",
+        "Hi, thanks for the report (ticket {ticket}). I've logged the sync issue with our "
+        "mobile team. To help them reproduce it, could you tell me your app version "
+        "(Settings → About) and whether it happens on Wi-Fi as well as mobile data?",
+    ),
+    "account": (
+        "Hi! No worries, I've reset it and you'll be back in immediately. Just check your "
+        "inbox!",
+        "Hi, sorry you're locked out (ticket {ticket}). I've sent a password-reset link to "
+        "the email on the account; it stays valid for 30 minutes. If it doesn't arrive, "
+        "could you check your spam folder and let me know?",
+    ),
+}
 
 
-def narrator(state: GameState) -> dict:
-    """Explores. Reads the shared conversation, writes one new scene."""
-    text = _speak(NARRATOR_ROLE, state)
-    if text is None:
-        text = OFFLINE_OPENING if state.get("turn", 0) == 0 else OFFLINE_EXPLORE
-    return {"messages": [AIMessage(content=text)], "turn": 1}
+def _draft(category: str, state: DeskState) -> dict:
+    """Shared body for the three specialists: draft (round 1) or revise (round 2+)."""
+    round_no = state.get("rounds", 0) + 1
+    ticket = state["ticket_id"]
+    who = {"billing": "Billing", "tech": "Tech", "account": "Account"}[category]
+    customer = _customer_message(state)
+
+    llm = _llm()
+    if llm is None:
+        first, fixed = OFFLINE_DRAFTS[category]
+        text = first if round_no == 1 else fixed.format(ticket=ticket)
+    else:
+        system = SPECIALIST_ROLE[category]
+        if round_no > 1:
+            # The reviewer's feedback comes back WITH the rulebook - agents learn the
+            # policy through the loop, which is what makes the hand-off visible.
+            system += (
+                f"\n\nYour previous draft was REJECTED by the Policy Reviewer.\n"
+                f"Previous draft: {state['draft']}\n"
+                f"Reviewer notes: {state['notes']}\n\n"
+                f"Rewrite it to satisfy EVERY rule below. The ticket ID is {ticket}.\n"
+                f"RULEBOOK:\n{POLICY}\n\nReply with the new draft only."
+            )
+        else:
+            system += " Reply with the draft only - no preamble."
+        text = llm.invoke([SystemMessage(content=system), HumanMessage(content=customer)]).content.strip()
+
+    return {
+        "draft": text,
+        "rounds": round_no,
+        "messages": [_say(who, f"Draft v{round_no}: {text}")],
+    }
 
 
-def combat(state: GameState) -> dict:
-    """Resolves fights. Writes a scene AND appends loot to the shared inventory."""
-    text = _speak(COMBAT_ROLE, state) or OFFLINE_COMBAT
-    scene, loot = _split_loot(text)
-    return {"messages": [AIMessage(content=scene)], "inventory": loot, "turn": 1}
+def billing(state: DeskState) -> dict:
+    return _draft("billing", state)
 
 
-def npc(state: GameState) -> dict:
-    """Voices characters. Writes dialogue AND may hand the player an item."""
-    text = _speak(NPC_ROLE, state) or OFFLINE_NPC
-    scene, loot = _split_loot(text)
-    return {"messages": [AIMessage(content=scene)], "inventory": loot, "turn": 1}
+def tech(state: DeskState) -> dict:
+    return _draft("tech", state)
 
 
-# --- Build + compile -------------------------------------------------------------------
-builder = StateGraph(GameState)
-builder.add_node("game_master", game_master)
-builder.add_node("narrator", narrator)
-builder.add_node("combat", combat)
-builder.add_node("npc", npc)
+def account(state: DeskState) -> dict:
+    return _draft("account", state)
 
-builder.add_edge(START, "game_master")                       # every turn starts with the supervisor
-builder.add_conditional_edges(                               # ...who hands off to ONE specialist
-    "game_master", route_by_scene,
-    {"narrator": "narrator", "combat": "combat", "npc": "npc"},
-)
-builder.add_edge("narrator", END)
-builder.add_edge("combat", END)
-builder.add_edge("npc", END)
+
+# --- Agent 5: the Policy Reviewer (part code, part LLM) ------------------------------------------
+def reviewer(state: DeskState) -> dict:
+    """Checks the draft against the rulebook. Hard rules in code; judgement by the model."""
+    draft, ticket = state["draft"], state["ticket_id"]
+    reasons: list[str] = []
+
+    # Hard rules - deterministic, like the exact-match evaluator in agent-eval.py.
+    if ticket not in draft:
+        reasons.append(f"missing the ticket ID {ticket}")
+    banned = BANNED.findall(draft)
+    if banned:
+        reasons.append(f"promises '{banned[0]}' (policy: never guarantee refunds, fixes or timelines)")
+    if len(draft.split()) > 90:
+        reasons.append(f"{len(draft.split())} words (limit 90)")
+
+    # Soft rules - judgement, like the LLM-as-a-judge evaluator.
+    llm = _llm()
+    if llm is not None and not reasons:
+        verdict = llm.invoke([SystemMessage(content=REVIEWER_ROLE),
+                              HumanMessage(content=f"Ticket ID: {ticket}\n\nDRAFT:\n{draft}")]).content.strip()
+        if verdict.upper().startswith("REJECTED"):
+            reasons.append(verdict.split(":", 1)[-1].strip() or "policy breach")
+
+    who = {"billing": "Billing", "tech": "Tech", "account": "Account"}[state["category"]]
+    if reasons:
+        notes = "; ".join(reasons)
+        return {"verdict": "rejected", "notes": notes,
+                "messages": [_say("Reviewer", f"❌ Rejected v{state['rounds']} — {notes} → back to {who}.")]}
+    return {"verdict": "approved", "notes": "",
+            "messages": [_say("Reviewer", f"✅ Approved v{state['rounds']} — meets policy.")]}
+
+
+def route_after_review(state: DeskState) -> Literal["billing", "tech", "account", "closer"]:
+    """The loop: rejected drafts go BACK to the same specialist, until MAX_ROUNDS."""
+    if state["verdict"] == "approved" or state["rounds"] >= MAX_ROUNDS:
+        return "closer"
+    return state["category"]
+
+
+# --- Agent 6: the Closer -------------------------------------------------------------------------
+def closer(state: DeskState) -> dict:
+    """Sends the approved reply, or escalates. Appends one line to the shared log."""
+    ticket, cat, pri, rounds = state["ticket_id"], state["category"], state["priority"], state["rounds"]
+    if state["verdict"] == "approved":
+        line = f"{ticket} {cat}/{pri} · replied after {rounds} review round(s)"
+        text = f"Reply sent to customer · ticket {ticket} logged ({cat} / {pri} / {rounds} review round(s))."
+    else:
+        line = f"{ticket} {cat}/{pri} · ESCALATED to a human after {rounds} rejected drafts"
+        text = (f"Could not get a compliant draft in {rounds} rounds → ticket {ticket} escalated "
+                f"to a human agent. Last reviewer notes: {state['notes']}")
+    return {"log": [line], "messages": [_say("Desk", text)]}
+
+
+# --- Build + compile --------------------------------------------------------------------------------
+builder = StateGraph(DeskState)
+builder.add_node("triage", triage)
+builder.add_node("billing", billing)
+builder.add_node("tech", tech)
+builder.add_node("account", account)
+builder.add_node("reviewer", reviewer)
+builder.add_node("closer", closer)
+
+builder.add_edge(START, "triage")                                        # supervisor first
+builder.add_conditional_edges("triage", route_by_category,               # hand-off to ONE specialist
+                              {"billing": "billing", "tech": "tech", "account": "account"})
+builder.add_edge("billing", "reviewer")                                  # every draft gets reviewed
+builder.add_edge("tech", "reviewer")
+builder.add_edge("account", "reviewer")
+builder.add_conditional_edges("reviewer", route_after_review,            # approve -> closer, reject -> loop back
+                              {"billing": "billing", "tech": "tech", "account": "account", "closer": "closer"})
+builder.add_edge("closer", END)
 
 # Expose the compiled graph for `langgraph dev` / Studio to import.
 # No checkpointer here - the dev server provides its own persistence (threads),
-# which is what keeps the adventure going across turns.
+# so each Studio thread is one customer conversation.
 graph = builder.compile()
 
 
 if __name__ == "__main__":
-    # Quick local smoke test (outside Studio). We add our own checkpointer so the
-    # three turns share a thread, exactly like memory_demo.py.
+    # Quick local smoke test (outside Studio): three tickets, one per specialist.
     from langgraph.checkpoint.memory import InMemorySaver
 
     test = builder.compile(checkpointer=InMemorySaver())
-    cfg = {"configurable": {"thread_id": "smoke"}}
-    for move in ("Start a fantasy adventure",
-                 "I draw my sword and attack the wolf",
-                 "I ask the old woman about the tower"):
-        s = test.invoke({"messages": [HumanMessage(content=move)]}, config=cfg)
-        print(f"\n> {move}")
-        print(f"  scene_type={s['scene_type']:9} turn={s['turn']} inventory={s['inventory']}")
-        print("  " + s["messages"][-1].content[:160].replace("\n", " | "))
+    tickets = [
+        "I was charged twice this month for the yearly plan and I want my money back, this is unacceptable.",
+        "The iOS app crashes every time I open a note with an image in it.",
+        "I can't log in - it says my password is wrong and I never got the reset email.",
+    ]
+    for i, msg in enumerate(tickets, 1):
+        s = test.invoke({"messages": [HumanMessage(content=msg)]},
+                        config={"configurable": {"thread_id": f"customer-{i}"}})
+        print(f"\n=== customer {i}: {msg[:60]}...")
+        for m in s["messages"]:
+            if isinstance(m, AIMessage):
+                print("  " + m.content[:150].replace("\n", " "))
+        print(f"  state: category={s['category']} priority={s['priority']} rounds={s['rounds']} "
+              f"verdict={s['verdict']} log={s['log']}")
