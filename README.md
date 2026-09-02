@@ -172,14 +172,14 @@ cd studio && ../.venv/bin/langgraph dev
 
 > **What you'll see:** the dev server starts and the Studio UI opens in your browser,
 > wired to the API at <http://127.0.0.1:2024>. The demo graph is a **multi-agent customer
-> support desk**: paste a customer message in the Chat tab and six agents handle it —
-> `triage` picks a specialist, `billing` / `tech` / `account` draft the reply, `reviewer`
-> checks it against a policy rulebook and bounces it back if it breaks a rule, `closer`
-> sends it and logs the ticket. **Every agent posts its own named message**, so you watch
-> the hand-offs and the reject-and-revise loop in the conversation itself, while the graph
-> panel lights up `triage → billing → reviewer → billing → reviewer → closer`. Runs with
-> **no API key** (keyword triage, canned drafts, rule-based review). `studio/agent.py`
-> exposes the compiled `graph`; `studio/langgraph.json` is the manifest.
+> support desk** in the shape of the classic LangGraph support-agent tutorial:
+> `categorize` → `analyze_sentiment` → route. A greeting gets the front desk and nobody
+> else; an angry message is escalated to a human; a calm billing or technical issue goes
+> to the matching specialist, who replies and logs the ticket. **Every agent posts its own
+> named message**, so you watch the hand-offs in the conversation itself while the graph
+> panel lights up node by node. Runs with **no API key** (keyword classifiers, canned
+> replies). `studio/agent.py` exposes the compiled `graph`; `studio/langgraph.json` is the
+> manifest.
 
 Optional: create `studio/.env` (copy from `studio/.env.example`) to set
 `OPENROUTER_API_KEY` (real AI-written scenes) and/or `LANGSMITH_API_KEY` (every Studio
@@ -207,7 +207,7 @@ turn shows up as a trace). Both are optional.
 | `simple_graph.py` | `.venv/bin/python simple_graph.py` | The fundamentals: state, nodes, **conditional edges**. Greeting branch = plain node; search branch = live LLM node (OpenRouter). |
 | `state_flow_demo.py` | `.venv/bin/python state_flow_demo.py` | **How state transfers between nodes.** Interactive: type a message, step the graph one node at a time, and watch every `IN → OUT(partial) → MERGE → EDGE → ROUTER` hand-off printed live. |
 | `memory_demo.py` | `.venv/bin/python memory_demo.py` | **Memory / persistence.** A checkpointer (`InMemorySaver`) + `thread_id` make the graph *remember* across turns. Same `thread_id` resumes saved state; a different one starts fresh. With a key, the LLM's replies use the remembered history. |
-| `studio/agent.py` | `cd studio && ../.venv/bin/langgraph dev` | **Multi-agent, made visual in LangGraph Studio.** A support desk: a triage supervisor routes to one of three specialists via a conditional edge, a policy reviewer approves or sends drafts back (a loop with a `MAX_ROUNDS` cap), a closer logs the ticket (`operator.add` reducer). Every agent posts under its own name. Chat tab, threads, time-travel. No API key required. |
+| `studio/agent.py` | `cd studio && ../.venv/bin/langgraph dev` | **Multi-agent, made visual in LangGraph Studio.** A support desk: `categorize` and `analyze_sentiment` write decisions, one conditional edge routes to the front desk, a specialist, or human escalation; tickets pile up in `log` (`operator.add` reducer). Every agent posts under its own name. Chat tab, threads, time-travel. No API key required. |
 | `langsmith-simple.py` | `.venv/bin/python langsmith-simple.py` | **LangSmith tracing** with one `@traceable` decorator and `wrap_openai`. A two-step pipeline (`gpt-4o-mini` → `claude-3-haiku` via one OpenRouter key) recorded as a trace tree. Needs `OPENROUTER_API_KEY`; uploads if `LANGSMITH_API_KEY` is set. |
 | `agent-eval.py` | `.venv/bin/python agent-eval.py` | **A tool-calling (ReAct) agent, then evaluations.** `add`/`multiply` tools, `ToolNode`, the `agent → tools → agent` loop; then a LangSmith dataset graded by exact-match, LLM-as-a-judge, and a substring check. Exact-match scores 0 on correct sentence answers — that's the lesson. Needs `OPENROUTER_API_KEY`; evals need `LANGSMITH_API_KEY`. |
 
@@ -244,14 +244,16 @@ cd studio && ../.venv/bin/langgraph dev
 
 - API: http://127.0.0.1:2024 · Studio UI opens automatically in your browser
 - `studio/agent.py` exposes a compiled `graph`; `studio/langgraph.json` is the manifest.
-- Six agents: `triage` (supervisor: category, priority, ticket ID), `billing` / `tech` /
-  `account` (specialists that draft the reply), `reviewer` (policy gate: hard rules in
-  code, judgement by the model), `closer` (sends and logs, or escalates after 3 rounds).
-- Two conditional edges: triage's hand-off, and the reviewer's approve-or-send-back loop.
-  The reviewer's `notes` land in shared state and become the specialist's instructions on
-  the next round — agents collaborate through state, not by calling each other.
+- Six nodes: `categorize` and `analyze_sentiment` (two tiny `prompt | llm` calls that
+  write `category` and `sentiment`), `handle_general` (front desk: greetings, no ticket),
+  `handle_billing` / `handle_technical` (specialists that write the reply and log the
+  ticket), `escalate` (negative sentiment goes straight to a human).
+- One conditional edge, `route_query`, reads both decisions. The specialist's prompt is
+  built from the `ticket_id` the categorizer wrote — agents collaborate through state, not
+  by calling each other.
+- `python studio/agent.py --mermaid` prints the graph as Mermaid.
 - Runs with **no API key** (keyword triage, canned drafts, rule-based review); set
-  `OPENROUTER_API_KEY` in `studio/.env` so all six agents are real model calls, and
+  `OPENROUTER_API_KEY` in `studio/.env` so every node is a real model call, and
   `LANGSMITH_API_KEY` to trace every ticket.
 - The Chat tab works because the state extends `MessagesState`; every agent posts an
   `AIMessage` under its own name. `log` uses `operator.add`, one line per closed ticket.
