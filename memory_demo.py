@@ -98,7 +98,7 @@ def _generate_reply(remembered: list, incoming: str, next_turn: int) -> str:
         client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
         memory_block = "\n".join(f"- {m}" for m in remembered) or "(nothing yet)"
         system = (
-            "You are a friendly assistant that REMEMBERS this conversation. "
+            "You are a friendly assistant. "
             "Everything the user has told you so far, oldest first:\n"
             f"{memory_block}\n"
             "Reply naturally and concisely. When they ask what you remember "

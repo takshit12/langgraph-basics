@@ -3,6 +3,7 @@ langgraph>=1.0,<2.0
 langgraph-cli[inmem]>=0.2
 langchain>=0.3
 langchain-openai>=0.2
+langsmith>=0.1          # tracing + evaluations (langsmith-simple.py, agent-eval.py)
 openai>=1.40
 streamlit>=1.36
 pandas>=2.0

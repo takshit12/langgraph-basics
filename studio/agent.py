@@ -1,180 +1,124 @@
-# LangGraph Studio demo graph — NO API KEY REQUIRED.
+# LangGraph Studio demo graph — an INTERACTIVE STORYTELLER (like storygen.py),
+# built on MessagesState so LangGraph Studio's **Chat** tab works.
 #
 # This file exposes a module-level compiled graph named `graph` so that
 # `langgraph dev` (the local Studio dev server) can discover and render it.
 # See langgraph.json -> "graphs": {"agent": "./agent.py:graph"}.
 #
-# It deliberately echoes simple_graph.py but is a bit richer: a 4-way
-# classifier + conditional routing into specialised handler nodes, plus a
-# final "finalize" node so Studio shows a clear multi-step topology you can
-# watch execute node-by-node.
+# Why MessagesState? Studio's Chat tab only appears when the state has a
+# `messages` key (a list of LangChain chat messages). storygen.py uses a big
+# structured StoryState (no `messages`) and drives its loop from Streamlit, so
+# it can't power Chat directly — this is the same idea (a choose-your-own
+# adventure narrator) expressed as a chat graph so you can talk to it in Studio.
 #
 # Concepts on display in Studio:
-#   - State (a TypedDict that flows through the graph and is merged at each node)
+#   - State (here: MessagesState — the conversation, merged with the add_messages reducer)
 #   - Nodes (plain functions: state -> partial state dict)
-#   - Conditional edges (a router that picks the next node by name)
-#   - START / END (modern entry/exit idiom)
+#   - A conditional edge from START (new story vs. continue the story)
 #   - compile() -> a runnable graph
-#   - checkpointer / threads (Studio adds persistence so you can time-travel)
+#   - threads / memory (Studio persists each thread, so the story continues)
 import os
-from typing import Optional, TypedDict
+from typing import Literal
 
-from langgraph.graph import StateGraph, START, END
+from dotenv import load_dotenv
+from langchain_core.messages import AIMessage, SystemMessage
+from langgraph.graph import StateGraph, START, END, MessagesState
 
-
-# --- Step 1: State -----------------------------------------------------------
-# Every node receives the whole state and returns a PARTIAL dict, which
-# LangGraph merges back in. In Studio, the right-hand "state inspector"
-# shows these fields filling in as each node runs.
-class ChatState(TypedDict):
-    message: Optional[str]        # user input (editable in Studio's input panel)
-    intent: Optional[str]         # set by the classifier node
-    sentiment: Optional[str]      # naive positive/negative/neutral signal
-    response: Optional[str]       # set by whichever handler node runs
-    final: Optional[str]          # set by the finalize node
+# Optional: read OPENROUTER_API_KEY / OPENROUTER_MODEL from studio/.env (or the
+# environment). With a key you get a real AI story; without one it still runs
+# with a simple canned scene, so Studio always works.
+load_dotenv()
 
 
-# --- Plain helpers (not nodes) ----------------------------------------------
-# Keyword heuristics so the demo runs with ZERO external dependencies / keys.
-INTENT_KEYWORDS = {
-    "greeting": ["hello", "hi", "hey", "good morning", "good evening"],
-    "farewell": ["bye", "goodbye", "see you", "cya", "later"],
-    "complaint": ["broken", "bug", "angry", "refund", "terrible", "not working", "hate"],
-}
-
-POSITIVE = ["great", "love", "thanks", "thank you", "awesome", "good", "nice"]
-NEGATIVE = ["broken", "bug", "angry", "terrible", "hate", "bad", "refund"]
-
-
-def classify_intent(text: str) -> str:
-    t = text.lower()
-    for intent, words in INTENT_KEYWORDS.items():
-        if any(w in t for w in words):
-            return intent
-    # Anything we don't recognise is treated as a question to answer.
-    return "question"
-
-
-def classify_sentiment(text: str) -> str:
-    t = text.lower()
-    pos = any(w in t for w in POSITIVE)
-    neg = any(w in t for w in NEGATIVE)
-    if neg and not pos:
-        return "negative"
-    if pos and not neg:
-        return "positive"
-    return "neutral"
-
-
-# --- Step 2: Nodes -----------------------------------------------------------
-def classify_node(state: ChatState) -> dict:
-    """First node: read the message, tag intent + sentiment."""
-    message = (state.get("message") or "").strip()
-    return {
-        "intent": classify_intent(message),
-        "sentiment": classify_sentiment(message),
-    }
-
-
-def greeting_node(state: ChatState) -> dict:
-    return {"response": "Hello! 👋 What can I help you with today?"}
-
-
-def farewell_node(state: ChatState) -> dict:
-    return {"response": "Thanks for stopping by — goodbye! 👋"}
-
-
-def complaint_node(state: ChatState) -> dict:
-    return {
-        "response": (
-            "I'm sorry you're having trouble. I've logged this as a complaint "
-            "and a human will follow up. Could you share more detail?"
-        )
-    }
-
-
-def question_node(state: ChatState) -> dict:
-    """The default branch. Optionally uses an LLM via OpenRouter if a key is
-    present, but falls back to a deterministic reply so Studio works offline."""
-    message = (state.get("message") or "").strip()
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if api_key:
-        try:
-            # OpenRouter via the OpenAI SDK (kept intact for the LLM path).
-            from openai import OpenAI
-
-            client = OpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=api_key,
-            )
-            completion = client.chat.completions.create(
-                model=os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
-                messages=[{"role": "user", "content": message}],
-            )
-            return {"response": completion.choices[0].message.content}
-        except Exception as exc:  # keep the demo resilient in the classroom
-            return {"response": f"(LLM unavailable: {exc}) You asked: '{message}'"}
-    # No key: deterministic answer so the live demo always works.
-    return {"response": f"Here's what I found for: '{message}' (offline demo answer)."}
-
-
-def finalize_node(state: ChatState) -> dict:
-    """Last node: combine signals into a final, tagged message so the graph
-    has a clear convergence point that Studio renders nicely."""
-    intent = state.get("intent")
-    sentiment = state.get("sentiment")
-    response = state.get("response") or ""
-    return {"final": f"[intent={intent} | sentiment={sentiment}] {response}"}
-
-
-# --- Step 3: The router ------------------------------------------------------
-# A conditional edge function reads state and returns the NAME of the branch.
-def route_by_intent(state: ChatState) -> str:
-    return state.get("intent") or "question"
-
-
-# --- Step 4: Build the graph -------------------------------------------------
-workflow = StateGraph(ChatState)
-
-workflow.add_node("classify", classify_node)
-workflow.add_node("greeting", greeting_node)
-workflow.add_node("farewell", farewell_node)
-workflow.add_node("complaint", complaint_node)
-workflow.add_node("question", question_node)
-workflow.add_node("finalize", finalize_node)
-
-# START -> classify is the modern entry-point idiom (replaces set_entry_point).
-workflow.add_edge(START, "classify")
-
-# Conditional edge: after classify, the router picks one handler branch.
-# The mapping turns each router return value into a target node.
-workflow.add_conditional_edges(
-    "classify",
-    route_by_intent,
-    {
-        "greeting": "greeting",
-        "farewell": "farewell",
-        "complaint": "complaint",
-        "question": "question",
-    },
+# --- The narrator's instructions ---------------------------------------------
+STORY_SYSTEM = (
+    "You are the narrator of a short, fun, choose-your-own-adventure story. "
+    "Continue the adventure based on the conversation so far. Keep each turn to "
+    "about 4-6 vivid sentences, and ALWAYS end your turn by offering the player "
+    "2-3 numbered choices for what to do next."
 )
 
-# All handler branches converge on finalize, then END.
-workflow.add_edge("greeting", "finalize")
-workflow.add_edge("farewell", "finalize")
-workflow.add_edge("complaint", "finalize")
-workflow.add_edge("question", "finalize")
-workflow.add_edge("finalize", END)
+
+def _llm():
+    """Build an OpenRouter-backed chat model, or return None if no key is set."""
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        model=os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+        temperature=0.8,
+    )
 
 
-# --- Step 5: Compile ---------------------------------------------------------
-# Expose a module-level `graph` for `langgraph dev` / Studio to import.
-# NOTE: do NOT pass a checkpointer here — the LangGraph dev server provides its
-# own persistence (threads/time-travel) automatically when running in Studio.
-graph = workflow.compile()
+def _narrate(state: MessagesState, offline_scene: str) -> dict:
+    """Shared helper: ask the LLM to continue the story (or use a canned scene).
+
+    Both story nodes have the SAME shape as every LangGraph node:
+    (state) -> a partial dict. Here they return one new `messages` entry, which
+    the built-in `add_messages` reducer APPENDS to the conversation.
+    """
+    llm = _llm()
+    if llm is None:
+        return {"messages": [AIMessage(content=offline_scene)]}
+    conversation = [SystemMessage(content=STORY_SYSTEM)] + state["messages"]
+    return {"messages": [llm.invoke(conversation)]}
+
+
+# --- Nodes -------------------------------------------------------------------
+def begin_story(state: MessagesState) -> dict:
+    """First turn: set the opening scene."""
+    return _narrate(
+        state,
+        "You wake at a misty crossroads at dawn, a worn map in your hand. "
+        "(Set OPENROUTER_API_KEY in studio/.env for a real, AI-written story.)\n"
+        "1) Take the forest path   2) Follow the river   3) Head for the distant tower",
+    )
+
+
+def continue_story(state: MessagesState) -> dict:
+    """Later turns: continue based on the player's latest choice."""
+    return _narrate(
+        state,
+        "The path twists onward and something stirs ahead. "
+        "(Set OPENROUTER_API_KEY in studio/.env for a real, AI-written story.)\n"
+        "1) Press forward   2) Turn back   3) Look around carefully",
+    )
+
+
+# --- The router: new story or continue? --------------------------------------
+def route(state: MessagesState) -> Literal["begin", "continue"]:
+    """If the narrator has already spoken, we're continuing; otherwise it's a
+    brand-new story. (A conditional edge straight from START.)"""
+    messages = state.get("messages", [])
+    told_before = any(isinstance(m, AIMessage) for m in messages[:-1])
+    return "continue" if told_before else "begin"
+
+
+# --- Build + compile ---------------------------------------------------------
+builder = StateGraph(MessagesState)
+builder.add_node("begin", begin_story)
+builder.add_node("continue", continue_story)
+
+# Conditional entry point: decide the first node from START.
+builder.add_conditional_edges(START, route, {"begin": "begin", "continue": "continue"})
+builder.add_edge("begin", END)
+builder.add_edge("continue", END)
+
+# Expose the compiled graph for `langgraph dev` / Studio to import.
+# No checkpointer here — the dev server provides its own persistence (threads),
+# which is what keeps your story going across turns.
+graph = builder.compile()
 
 
 if __name__ == "__main__":
     # Quick local smoke test (run directly, outside Studio).
-    for msg in ["Hi there!", "My app is broken and I want a refund", "What is LangGraph?"]:
-        print(msg, "->", graph.invoke({"message": msg})["final"])
+    from langchain_core.messages import HumanMessage
+
+    s = graph.invoke({"messages": [HumanMessage(content="Start a fantasy adventure")]})
+    print("TURN 1:", s["messages"][-1].content[:200])
+    s = graph.invoke({"messages": s["messages"] + [HumanMessage(content="I take the forest path")]})
+    print("TURN 2:", s["messages"][-1].content[:200])
