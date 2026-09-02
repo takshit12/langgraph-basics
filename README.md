@@ -88,14 +88,11 @@ Either way you end up with a `.venv/` folder containing the interpreter at
 
 ### 4. (Optional) Add an API key for the LLM paths
 
-**Most examples need NO key.** `state_flow_demo.py`, `memory_demo.py`, and the
-LangGraph Studio demo all run fully offline. A key is only needed for:
-
-- `simple_graph.py`'s **search** branch (a live LLM call), and
-- the **optional** `question` node in the Studio graph.
-
-Without a key those specific paths fall back gracefully, so you can skip this section
-entirely and still see everything work.
+**Every core example runs with NO key.** `state_flow_demo.py` never touches a model.
+`simple_graph.py`'s search branch, `memory_demo.py`'s replies, and the Studio storyteller
+use OpenRouter *when a key is present* and fall back to canned text when it isn't, so you
+can skip this section and still see everything work. Two files do need a key:
+`langsmith-simple.py` and `agent-eval.py` (the LangSmith demos).
 
 To enable the LLM paths:
 
@@ -111,8 +108,13 @@ To enable the LLM paths:
 
    ```dotenv
    OPENROUTER_API_KEY=sk-or-...your-key...
-   OPENROUTER_MODEL=openai/gpt-4.1-mini
+   OPENROUTER_MODEL=openai/gpt-4o-mini
    ```
+
+   Optional, for the LangSmith demos: `LANGSMITH_API_KEY=lsv2_...` (free key at
+   <https://smith.langchain.com> → Settings → API Keys) plus `LANGSMITH_TRACING=true`.
+   Without it `langsmith-simple.py` still runs (no upload) and `agent-eval.py` runs the
+   agent but skips the hosted evaluations.
 
 The scripts call `load_dotenv()`, so they read this automatically. OpenRouter is used
 through the OpenAI SDK with `base_url=https://openrouter.ai/api/v1`. **`.env` is
@@ -169,15 +171,17 @@ cd studio && ../.venv/bin/langgraph dev
 ```
 
 > **What you'll see:** the dev server starts and the Studio UI opens in your browser,
-> wired to the API at <http://127.0.0.1:2024>. The demo graph
-> (`classify → {greeting | farewell | complaint | question} → finalize → END`) runs with
-> **no API key**. `studio/agent.py` exposes the compiled `graph`; `studio/langgraph.json`
+> wired to the API at <http://127.0.0.1:2024>. The demo graph is an **interactive
+> storyteller** (`START → route → {begin | continue} → END`) built on `MessagesState`, so
+> the **Chat tab works**: type "Start a fantasy adventure", then answer the narrator's
+> numbered choices and watch the `messages` list grow in the state inspector. Each
+> conversation is a thread; a new thread starts a new story. Runs with **no API key**
+> (canned scenes). `studio/agent.py` exposes the compiled `graph`; `studio/langgraph.json`
 > is the manifest.
 
 Optional: create `studio/.env` (copy from `studio/.env.example`) to set
-`OPENROUTER_API_KEY` (enables the LLM `question` branch) and/or `LANGSMITH_API_KEY`
-(enables LangSmith tracing). Both are optional. Note: the **Chat tab is greyed out** for
-this graph — that's expected; drive it from the input panel instead.
+`OPENROUTER_API_KEY` (real AI-written scenes) and/or `LANGSMITH_API_KEY` (every Studio
+turn shows up as a trace). Both are optional.
 
 ### 8. Troubleshooting
 
@@ -188,8 +192,9 @@ this graph — that's expected; drive it from the input panel instead.
   `source .venv/bin/activate` (then `langgraph`, `python`, and `pip` work without the
   `.venv/bin/` prefix; run `deactivate` to exit).
 - **LLM / network errors** (timeouts, 401, 402, empty responses) on `simple_graph.py`'s
-  search branch or Studio's `question` node — check that `OPENROUTER_API_KEY` is set in
-  the right `.env` and that your OpenRouter account has credits.
+  search branch, `memory_demo.py`, or the Studio storyteller — check that
+  `OPENROUTER_API_KEY` is set in the right `.env` (root vs `studio/`) and that your
+  OpenRouter account has credits.
 - **"LangSmith API key missing" banner** in Studio — **safe to ignore.** Tracing is
   optional; set `LANGSMITH_API_KEY` in `studio/.env` only if you want it.
 
@@ -199,10 +204,20 @@ this graph — that's expected; drive it from the input panel instead.
 |---|---|---|
 | `simple_graph.py` | `.venv/bin/python simple_graph.py` | The fundamentals: state, nodes, **conditional edges**. Greeting branch = plain node; search branch = live LLM node (OpenRouter). |
 | `state_flow_demo.py` | `.venv/bin/python state_flow_demo.py` | **How state transfers between nodes.** Interactive: type a message, step the graph one node at a time, and watch every `IN → OUT(partial) → MERGE → EDGE → ROUTER` hand-off printed live. |
-| `memory_demo.py` | `.venv/bin/python memory_demo.py` | **Memory / persistence.** A checkpointer (`InMemorySaver`) + `thread_id` make the graph *remember* across turns. Same `thread_id` resumes saved state; a different one starts fresh. |
-| `studio/agent.py` | `cd studio && ../.venv/bin/langgraph dev` | **Visual debugging in LangGraph Studio.** A 4-way classifier with conditional routing you can watch execute node-by-node. No API key required. |
+| `memory_demo.py` | `.venv/bin/python memory_demo.py` | **Memory / persistence.** A checkpointer (`InMemorySaver`) + `thread_id` make the graph *remember* across turns. Same `thread_id` resumes saved state; a different one starts fresh. With a key, the LLM's replies use the remembered history. |
+| `studio/agent.py` | `cd studio && ../.venv/bin/langgraph dev` | **Visual debugging in LangGraph Studio.** An interactive storyteller on `MessagesState`: a conditional edge from `START`, the Chat tab, the `messages` list growing per turn, threads and time-travel. No API key required. |
+| `langsmith-simple.py` | `.venv/bin/python langsmith-simple.py` | **LangSmith tracing** with one `@traceable` decorator and `wrap_openai`. A two-step pipeline (`gpt-4o-mini` → `claude-3-haiku` via one OpenRouter key) recorded as a trace tree. Needs `OPENROUTER_API_KEY`; uploads if `LANGSMITH_API_KEY` is set. |
+| `agent-eval.py` | `.venv/bin/python agent-eval.py` | **A tool-calling (ReAct) agent, then evaluations.** `add`/`multiply` tools, `ToolNode`, the `agent → tools → agent` loop; then a LangSmith dataset graded by exact-match, LLM-as-a-judge, and a substring check. Exact-match scores 0 on correct sentence answers — that's the lesson. Needs `OPENROUTER_API_KEY`; evals need `LANGSMITH_API_KEY`. |
 
 > Both console demos also run headless (`... < /dev/null`) as a scripted auto-demo.
+
+## Breakout: build your own agent
+
+`breakout-activity.pdf` is the hands-on activity (~15 minutes). Copy its full text into an
+AI coding assistant (Claude Code, Codex, Cursor, Copilot agent mode) and send it. The
+assistant asks what you want your agent to do, then builds and runs a LangGraph pipeline
+of three or more nodes around your idea, printing the state after each step. Core API
+only, LangGraph 1.x, and an offline fallback so it works without a key.
 
 ### `state_flow_demo.py` controls
 - type any message to run it through the graph; empty = sample message
@@ -227,8 +242,10 @@ cd studio && ../.venv/bin/langgraph dev
 
 - API: http://127.0.0.1:2024 · Studio UI opens automatically in your browser
 - `studio/agent.py` exposes a compiled `graph`; `studio/langgraph.json` is the manifest.
-- The demo graph runs with **no API key**; set `OPENROUTER_API_KEY` in `studio/.env` to
-  enable the LLM `question` branch (and optional LangSmith tracing via `LANGSMITH_API_KEY`).
+- The storyteller runs with **no API key** (canned scenes); set `OPENROUTER_API_KEY` in
+  `studio/.env` for AI-written scenes, and `LANGSMITH_API_KEY` to trace every turn.
+- The Chat tab works because the state is `MessagesState` (a `messages` key with the
+  `add_messages` reducer). Each node returns one message; the reducer appends it.
 
 ## API surface used here
 
@@ -242,3 +259,5 @@ cd studio && ../.venv/bin/langgraph dev
 | `invoke(input, config)` | run the graph; `config={"configurable": {"thread_id": ...}}` selects the memory thread |
 | `stream(input, stream_mode="updates")` | yield each node's partial as it finishes |
 | `InMemorySaver()` | an in-memory checkpointer for per-thread memory |
+| `MessagesState` / `add_messages` | built-in chat state whose `messages` reducer appends; enables Studio's Chat tab |
+| `ToolNode` / `bind_tools` | prebuilt node that runs tools the model requested; the agent → tools → agent loop (`agent-eval.py`) |

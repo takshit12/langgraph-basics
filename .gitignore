@@ -24,6 +24,11 @@ skills-lock.json
 # private instructor materials — intentionally NOT published
 INSTRUCTOR_GUIDE.md
 explainers/
+STUDIO.md
+lesson.html
+
+# live-coding scratch copy (not part of the lesson)
+simple_graph2.py
 
 # retired examples (dropped from the lesson)
 storygen.py
